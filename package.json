@@ -1,0 +1,28 @@
+{
+  "name": "ssl-cert-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "web"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run build:web && wrangler dev",
+    "build:web": "npm run build -w web",
+    "types": "wrangler types",
+    "check": "tsc --noEmit && tsc --noEmit -p test/tsconfig.json",
+    "test": "npm run build:web && vitest run",
+    "test:watch": "npm run build:web && vitest",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "deploy": "npm run build:web && wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.3.3",
+    "typescript": "^5.5.2",
+    "vitest": "~4.1.0",
+    "wrangler": "^4.144.0"
+  }
+}

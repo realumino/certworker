@@ -5,7 +5,7 @@ via the Cloudflare DNS API), stores them in R2, and distributes them to nodes th
 pull periodically using per-node API keys. Admin surface is protected by Cloudflare
 Access; there is no application-level user login.
 
-Status: **planning complete, implementation not started.**
+Status: **implementation in progress — M0 (scaffold) complete.**
 
 ---
 
@@ -474,7 +474,7 @@ ssl-cert-worker/
   "d1_databases": [{ "binding": "DB", "database_name": "ssl-cert-worker", "database_id": "<id>" }],
   "r2_buckets": [{ "binding": "CERTS", "bucket_name": "ssl-cert-artifacts" }],
   "workflows": [{ "name": "certificate-issuance", "binding": "ISSUANCE", "class_name": "CertificateWorkflow" }],
-  "rate_limiting": [{ "name": "PULL_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
+  "ratelimits": [{ "name": "PULL_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
   "triggers": { "crons": ["17 3 * * *"] },
   "routes": [{ "pattern": "ssl.example.com", "custom_domain": true }],
   "vars": {

@@ -1,0 +1,52 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ssl-cert-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    // web/dist must exist before wrangler dev / vitest run (npm run build:web first).
+    "directory": "web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api", "/api/*", "/v1", "/v1/*"]
+  },
+  // Placeholder IDs are fine for local dev. Replace both before the first remote
+  // command or deploy:
+  //   npx wrangler d1 create ssl-cert-worker
+  //   npx wrangler r2 bucket create ssl-cert-artifacts
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ssl-cert-worker",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "CERTS",
+      "bucket_name": "ssl-cert-artifacts"
+    }
+  ],
+  "workflows": [
+    {
+      "name": "certificate-issuance",
+      "binding": "ISSUANCE",
+      "class_name": "CertificateWorkflow"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "PULL_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ],
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  },
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "https://<team>.cloudflareaccess.com",
+    "ACCESS_AUD": "<aud>",
+    "ACME_DIRECTORY": "https://acme-staging-v02.api.letsencrypt.org/directory"
+  }
+}
