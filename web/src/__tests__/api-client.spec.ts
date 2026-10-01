@@ -13,6 +13,16 @@ describe("api client", () => {
     expect(stub.requests).toEqual([{ method: "POST", path: "/api/keys", body: { label: "web-01" } }]);
   });
 
+  it("sends an empty JSON object for body-less mutations (the guard rejects no Content-Type)", async () => {
+    const stub = installFetchStub({
+      "POST /api/keys/k1/revoke": () => json({ key: {} }),
+    });
+
+    await apiFetch("/api/keys/k1/revoke", { method: "POST" });
+
+    expect(stub.requests).toEqual([{ method: "POST", path: "/api/keys/k1/revoke", body: {} }]);
+  });
+
   it("maps error bodies onto ApiError", async () => {
     installFetchStub({
       "POST /api/domains": () => json({ error: "domain_exists", message: "A domain row already exists" }, 409),

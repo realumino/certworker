@@ -36,12 +36,15 @@ export function onUnauthorized(listener: UnauthorizedListener): () => void {
 export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? "GET";
   const headers = new Headers({ Accept: "application/json" });
-  if (options.body !== undefined) headers.set("Content-Type", "application/json");
+  // The Worker's mutation guard requires Content-Type: application/json on
+  // every mutation, so body-less mutations send an empty JSON object.
+  const body = options.body === undefined && method !== "GET" ? {} : options.body;
+  if (body !== undefined) headers.set("Content-Type", "application/json");
 
   const response = await fetch(path, {
     method,
     headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body: body === undefined ? undefined : JSON.stringify(body),
     signal: options.signal,
   });
 
