@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { apiFetch, query } from "../api/client";
+import { apiFetch, asApiError, query, type ApiError } from "../api/client";
 import type { Certificate, CertificateStatus, Domain } from "../api/types";
 import { EmptyRow, ErrorBanner, Link, Page, Pager, StatusBadge } from "../components";
 import { formatDateTime, formatExpiry, shortId, truncate } from "../format";
@@ -81,17 +81,44 @@ export function CertificatesView() {
 }
 
 export function CertificateDetailView({ certificateId }: { certificateId: string }) {
-  const { data: certificate, error, loading } = useAsync<Certificate>(
+  const { data: certificate, error, loading, reload } = useAsync<Certificate>(
     (signal) => apiFetch(`/api/certificates/${certificateId}`, { signal }),
     [certificateId],
   );
+  const [actionError, setActionError] = useState<ApiError | null>(null);
+
+  async function revoke() {
+    if (!certificate) return;
+    const name = certificate.domain_name ?? certificate.id;
+    if (
+      !window.confirm(
+        `Revoke ${name}? Let's Encrypt marks the certificate revoked and its stored PEMs and private key are deleted. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setActionError(null);
+    try {
+      await apiFetch(`/api/certificates/${certificate.id}/revoke`, { method: "POST" });
+      reload();
+    } catch (cause) {
+      setActionError(asApiError(cause));
+    }
+  }
 
   return (
     <Page title="Certificate">
-      <ErrorBanner error={error} />
+      <ErrorBanner error={actionError ?? error} />
       {loading && !certificate ? <p className="muted">Loading…</p> : null}
       {certificate ? (
         <>
+          {certificate.status !== "revoked" && !certificate.purged_at ? (
+            <div className="row-actions">
+              <button type="button" className="danger" onClick={revoke}>
+                Revoke
+              </button>
+            </div>
+          ) : null}
           <div className="detail">
             <dl>
               <dt>Domain</dt>

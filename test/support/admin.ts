@@ -150,6 +150,8 @@ export async function seedCertificate(
     sans?: string[];
     storeArtifacts?: boolean;
     privateKeyPem?: string;
+    /** Overrides the default placeholder leaf PEM (needed by revoke/parse flows). */
+    certPem?: string;
   } = {},
 ): Promise<CertificateRow> {
   const certificateId = options.id ?? crypto.randomUUID();
@@ -194,7 +196,7 @@ export async function seedCertificate(
 
   if (options.storeArtifacts !== false) {
     await Promise.all([
-      bucket.put(`${r2Prefix}/cert.pem`, `LEAF PEM for ${certificateId}\n`),
+      bucket.put(`${r2Prefix}/cert.pem`, options.certPem ?? `LEAF PEM for ${certificateId}\n`),
       bucket.put(`${r2Prefix}/chain.pem`, `CHAIN PEM for ${certificateId}\n`),
       bucket.put(`${r2Prefix}/fullchain.pem`, `FULLCHAIN PEM for ${certificateId}\n`),
     ]);

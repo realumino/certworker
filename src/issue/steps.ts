@@ -51,6 +51,16 @@ export interface IssueTimings {
   acmeRequestTimeoutMs: number;
 }
 
+/** The Env slice issuance needs; `ACME_DIRECTORY` stays a plain string so the
+ * function works for any deployment environment and for revoke/admin reuse. */
+export interface IssueEnvironment {
+  DB: D1Database;
+  CERTS: R2Bucket;
+  ACME_DIRECTORY: string;
+  ENVELOPE_KEY: string;
+  CF_DNS_API_TOKEN: string;
+}
+
 export interface IssueDependencies {
   db: D1Database;
   bucket: R2Bucket;
@@ -119,7 +129,7 @@ const DEFAULT_TIMINGS: IssueTimings = {
 };
 
 export function createIssueDependencies(
-  env: Pick<Env, "DB" | "CERTS" | "ACME_DIRECTORY" | "ENVELOPE_KEY" | "CF_DNS_API_TOKEN">,
+  env: IssueEnvironment,
   options: { fetcher?: typeof fetch; timings?: Partial<IssueTimings> } = {},
 ): IssueDependencies {
   return {
@@ -584,7 +594,7 @@ export function issueErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function loadAcmeAccount(
+export async function loadAcmeAccount(
   deps: IssueDependencies,
   environment: AcmeEnvironment,
 ): Promise<{ client: AcmeClient; accountUrl: string; thumbprint: string }> {

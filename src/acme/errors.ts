@@ -102,6 +102,11 @@ export function isRateLimited(error: unknown): error is AcmeError {
   );
 }
 
+/** RFC 8555 §7.6: revoking an already-revoked certificate is treated as success. */
+export function isAlreadyRevoked(error: unknown): error is AcmeError {
+  return error instanceof AcmeError && hasAcmeType(error.type, "alreadyRevoked");
+}
+
 function hasAcmeType(type: string | undefined, name: string): boolean {
   return type === name || type?.endsWith(`:${name}`) === true || type?.endsWith(`/${name}`) === true;
 }

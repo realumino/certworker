@@ -5,7 +5,7 @@ via the Cloudflare DNS API), stores them in R2, and distributes them to nodes th
 pull periodically using per-node API keys. Admin surface is protected by Cloudflare
 Access; there is no application-level user login.
 
-Status: **M0–M6 complete. M2 live staging acceptance is still pending. M6 adds the node pull API (`/v1` bearer keys, ETag/304, per-key rate limit, pull events, `last_used_at` tracking). M7 adds certificate revocation, the DELETE-domain revoke step, and the daily renewal cron; M8 ships the node agent + runbook.**
+Status: **M0–M7 complete. M2 live staging acceptance is still pending. M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the `env.production` staging/prod split. M8 ships the node agent + runbook.**
 
 ---
 

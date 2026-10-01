@@ -119,6 +119,18 @@ describe("admin router", () => {
     expect(body.token).toMatch(/^scw_[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/);
   });
 
+  it("dispatches POST /api/certificates/:id/revoke to the revoke handler (M7)", async () => {
+    const { access, token, options } = await authenticatedAccess();
+    const response = await handleAdminApi(
+      accessRequest(`/api/certificates/${crypto.randomUUID()}/revoke`, token, { method: "POST" }),
+      env,
+      options,
+    );
+    // The handler ran and answered 404 for the unknown certificate id.
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "not_found" });
+  });
+
   it("allows non-browser clients without Origin/Sec-Fetch-Site", async () => {
     const { access, token, options } = await authenticatedAccess();
     const response = await handleAdminApi(

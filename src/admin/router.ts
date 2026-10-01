@@ -1,7 +1,7 @@
 import { accessConfigFromEnv, verifyAccessRequest } from "../auth/access";
 import { listAuditHandler } from "./audit";
 import { createDomainHandler, deleteDomainHandler, getDomainHandler, issueDomainHandler, listDomainsHandler, listZonesHandler, updateDomainHandler } from "./domains";
-import { downloadCertificateHandler, getCertificateHandler, listCertificatesHandler } from "./certificates";
+import { downloadCertificateHandler, getCertificateHandler, listCertificatesHandler, revokeCertificateHandler } from "./certificates";
 import { createAdminDependencies, type AdminHandler, type AdminOptions } from "./deps";
 import { checkMutationGuard, errorResponse, matchRoute } from "./http";
 import { getOverviewHandler } from "./overview";
@@ -27,6 +27,7 @@ const ROUTES: Route[] = [
   { method: "GET", pattern: "/api/certificates", handler: listCertificatesHandler },
   { method: "GET", pattern: "/api/certificates/:id", handler: getCertificateHandler },
   { method: "GET", pattern: "/api/certificates/:id/download", handler: downloadCertificateHandler },
+  { method: "POST", pattern: "/api/certificates/:id/revoke", handler: revokeCertificateHandler },
   { method: "GET", pattern: "/api/runs", handler: listRunsHandler },
   { method: "GET", pattern: "/api/runs/:id", handler: getRunHandler },
   { method: "GET", pattern: "/api/keys", handler: listKeysHandler },

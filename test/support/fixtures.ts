@@ -3,7 +3,13 @@ import { createIssueRun, type DomainRow } from "../../src/store/d1";
 
 export async function seedDomain(
   db: D1Database,
-  options: { name?: string; status?: DomainRow["status"]; includeWildcard?: boolean; zoneId?: string } = {},
+  options: {
+    name?: string;
+    status?: DomainRow["status"];
+    includeWildcard?: boolean;
+    zoneId?: string;
+    renewBeforeDays?: number;
+  } = {},
 ): Promise<DomainRow> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -13,7 +19,7 @@ export async function seedDomain(
     zone_id: options.zoneId ?? "zone-test",
     include_wildcard: options.includeWildcard === false ? 0 : 1,
     key_type: "ecdsa_p256",
-    renew_before_days: 30,
+    renew_before_days: options.renewBeforeDays ?? 30,
     preferred_chain: null,
     status: options.status ?? "active",
     last_error: null,

@@ -10,7 +10,7 @@ pull periodically using per-node API keys (one key = one node).
 - Renewal: daily cron creates Cloudflare Workflow instances for due domains.
 - Requires the Workers **Paid** plan (free-tier CPU limits cannot perform issuance).
 
-Status: M0–M6 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). M6 node pull API is implemented (bearer keys, ETag/304, per-key rate limit, pull events, last-use tracking). Certificate revocation and daily renewals follow in M7.
+Status: M0–M7 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). M6 node pull API is implemented (bearer keys, ETag/304, per-key rate limit, pull events, last-use tracking). M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the production environment config. The node agent and runbook follow in M8.
 
 ## Local development
 
@@ -66,6 +66,33 @@ them into production storage. Any non-staging directory requires `--allow-produc
 
 The offline suite covers the ACME/Cloudflare DNS flows. The live staging run requires
 a real test zone and DNS token and has not yet been performed in this workspace.
+
+## Renewals, sweeper, and revocation (M7)
+
+**Daily renewals.** The cron trigger `17 3 * * *` fires `scheduled()` (`src/index.ts`), which jitters 0–60 s and then creates one `CertificateWorkflow` instance per active domain that has no current certificate or whose `not_after` falls within its `renew_before_days`. Instance IDs are `renew-<domainId>-<yyyy-mm-dd>` (UTC), so an accidental same-day repeat skips instead of reissuing; the `idx_run_active` partial unique index serializes renewals against manual runs. Failures are per-domain and recorded on the run row. Locally: `npx wrangler dev --test-scheduled`, then
+
+```sh
+curl 'http://localhost:8787/__scheduled?cron=17+3+*+*+*'
+```
+
+**Sweeper.** The same invocation cleans up state a crashed pipeline could not finish: R2 prefixes of certificates with `status != 'current' AND purged_at IS NULL` are deleted and marked purged, and `_acme-challenge` TXT records recorded in `challenge_records` older than 24 h are deleted via the DNS API. Every step is best-effort and logged (`cron.complete`, `sweeper.*`).
+
+**Revocation.** `POST /api/certificates/:id/revoke` (admin API, Access-protected) revokes via ACME `revokeCert` signed with the issuing account key, then deletes the stored PEMs and flips the D1 row to `revoked`. It is idempotent: a repeat call or an `alreadyRevoked` answer from the CA still ends `revoked`+purged and issues no second CA request. A certificate whose artifacts were already purged can no longer be revoked (409). `DELETE /api/domains/:id` revokes the current certificate first, then soft-deletes the row; while the CA rejects the revocation the deletion is refused with 502, and the audit entry records the revoke outcome.
+
+## Staging and production (M7)
+
+`wrangler.jsonc` carries an `env.production` block: production ACME directory (`https://acme-v02.api.letsencrypt.org/directory`), separate D1 (`ssl-cert-worker-prod`) and R2 bucket (`ssl-cert-artifacts-prod`). Cron triggers and assets are inherited from the top level; deploy and configure it with:
+
+```sh
+npx wrangler d1 create ssl-cert-worker-prod
+npx wrangler r2 bucket create ssl-cert-artifacts-prod   # paste both IDs into env.production
+npx wrangler d1 migrations apply DB --env production --remote
+npx wrangler secret put CF_DNS_API_TOKEN --env production
+npx wrangler secret put ENVELOPE_KEY --env production   # distinct from staging
+npx wrangler deploy --env production
+```
+
+Both environments share the single hostname: moving `ssl.example.com` from one Worker to the other is a cutover, so release the route from the previous Worker first.
 
 ## Node pull API (M6)
 

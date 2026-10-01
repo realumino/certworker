@@ -1,4 +1,8 @@
+import { NonRetryableError } from "cloudflare:workflows";
 import { normalizeDomainName } from "../acme/dns01";
+import { AcmeError, AcmeProtocolError } from "../acme/errors";
+import { issueErrorMessage } from "../issue/steps";
+import { CertificateArtifactsMissingError, revokeStoredCertificate } from "../issue/revoke";
 import {
   CloudflareApiError,
   findZoneId,
@@ -245,9 +249,36 @@ export async function deleteDomainHandler(
     if (activeRun) {
       return errorResponse(409, "run_in_progress", `${domain.name} has an active issue run; retry after it finishes`);
     }
-    // M7 revokes the current certificate and purges its R2 prefix here, before the soft delete.
+
+    // M7: deletion revokes the current certificate first (account key + purge),
+    // then soft-deletes the row so history and audit survive.
+    const current = await getCurrentCertificate(deps.db, domain.id);
+    let revoke: "none" | "revoked" | "already_revoked" | "artifacts_missing" = "none";
+    if (current) {
+      try {
+        revoke = (await revokeStoredCertificate(deps, current)).status;
+      } catch (error) {
+        if (error instanceof CertificateArtifactsMissingError) {
+          // Nothing revocable remains (PEMs already purged); keep the deletion.
+          revoke = "artifacts_missing";
+        } else if (
+          error instanceof AcmeError ||
+          error instanceof AcmeProtocolError ||
+          error instanceof NonRetryableError
+        ) {
+          return errorResponse(
+            502,
+            "upstream_error",
+            `Revocation failed for ${domain.name}: ${issueErrorMessage(error)}`,
+          );
+        } else {
+          throw error;
+        }
+      }
+    }
+
     await softDeleteDomain(deps.db, domain.id);
-    await recordAudit(deps, "domain.delete", domain.id, { name: domain.name });
+    await recordAudit(deps, "domain.delete", domain.id, { name: domain.name, revoke });
   }
 
   const row = await loadDomainWithCertificate(deps, domain.id);

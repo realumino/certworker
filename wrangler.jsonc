@@ -54,5 +54,51 @@
   },
   "secrets": {
     "required": ["CF_DNS_API_TOKEN", "ENVELOPE_KEY"]
+  },
+  "env": {
+    // Production: production ACME directory, separate D1/R2. Bindings and vars
+    // are non-inheritable and repeated here; `triggers` (cron) and `assets` are
+    // inherited from the top level. Deploy with `wrangler deploy --env production`.
+    "production": {
+      // The two environments share the hostname; moving it is a cutover (the
+      // previous Worker must release the route first).
+      "routes": [{ "pattern": "ssl.example.com", "custom_domain": true }],
+      "vars": {
+        "ACCESS_TEAM_DOMAIN": "https://<team>.cloudflareaccess.com",
+        "ACCESS_AUD": "<aud>",
+        "ACME_DIRECTORY": "https://acme-v02.api.letsencrypt.org/directory",
+        "DEV_ACCESS_EMAIL": ""
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "ssl-cert-worker-prod",
+          "database_id": "00000000-0000-0000-0000-000000000000"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "CERTS",
+          "bucket_name": "ssl-cert-artifacts-prod"
+        }
+      ],
+      "workflows": [
+        {
+          "name": "certificate-issuance-production",
+          "binding": "ISSUANCE",
+          "class_name": "CertificateWorkflow"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "PULL_LIMITER",
+          "namespace_id": "1002",
+          "simple": { "limit": 60, "period": 60 }
+        }
+      ],
+      "secrets": {
+        "required": ["CF_DNS_API_TOKEN", "ENVELOPE_KEY"]
+      }
+    }
   }
 }

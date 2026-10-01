@@ -12,6 +12,10 @@ const BASE_URL = "https://acme-staging-v02.api.letsencrypt.org";
 
 export interface MockAcmeOptions {
   invalidAuthorization?: boolean;
+  /** POST /revoke-cert answers the RFC 8555 alreadyRevoked problem. */
+  alreadyRevoked?: boolean;
+  /** POST /revoke-cert answers a generic 403 problem. */
+  revokeFails?: boolean;
 }
 
 export class MockAcme {
@@ -21,6 +25,8 @@ export class MockAcme {
   private certificatePem = "";
   private finalized = false;
   private nonceCount = 0;
+  /** base64url DER payloads accepted by /revoke-cert. */
+  readonly revokedCertificates: string[] = [];
 
   constructor(options: MockAcmeOptions = {}) {
     this.options = options;
@@ -35,6 +41,7 @@ export class MockAcme {
         newNonce: `${BASE_URL}/new-nonce`,
         newAccount: `${BASE_URL}/new-account`,
         newOrder: `${BASE_URL}/new-order`,
+        revokeCert: `${BASE_URL}/revoke-cert`,
       });
     }
     if (request.method === "HEAD" && path === "/new-nonce") {
@@ -116,6 +123,24 @@ export class MockAcme {
         headers: { ...this.nonceHeaders(), "Content-Type": "application/pem-certificate-chain" },
       });
     }
+    if (request.method === "POST" && path === "/revoke-cert") {
+      const payload = readJwsPayload(body);
+      if (!isObject(payload) || typeof payload.certificate !== "string") {
+        return this.problem("revokeCert needs a certificate", 400);
+      }
+      if (this.options.revokeFails === true) {
+        return this.problem("mock revocation rejected", 403, "urn:ietf:params:acme:error:unauthorized");
+      }
+      if (this.options.alreadyRevoked === true) {
+        return this.problem(
+          "mock certificate is already revoked",
+          400,
+          "urn:ietf:params:acme:error:alreadyRevoked",
+        );
+      }
+      this.revokedCertificates.push(payload.certificate);
+      return this.reply({}, 200);
+    }
 
     return undefined;
   }
@@ -130,8 +155,8 @@ export class MockAcme {
     };
   }
 
-  private problem(detail: string, status: number): Response {
-    return this.reply({ type: "urn:ietf:params:acme:error:malformed", detail, status }, status);
+  private problem(detail: string, status: number, type = "urn:ietf:params:acme:error:malformed"): Response {
+    return this.reply({ type, detail, status }, status);
   }
 
   private reply(value: unknown, status = 200, extraHeaders: HeadersInit = {}): Response {
@@ -197,4 +222,22 @@ function isIdentifier(value: unknown): value is AcmeIdentifier {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A real parseable leaf PEM (self-signed) for R2 fixtures consumed by revoke flows. */
+export async function createSelfSignedCertificatePem(commonName: string): Promise<string> {
+  const keyPair = await generateEcP256KeyPair();
+  const certificate = await x509.X509CertificateGenerator.create({
+    subject: `CN=${commonName}`,
+    issuer: "CN=Offline ACME Test Issuer",
+    publicKey: keyPair.publicKey,
+    signingKey: keyPair.privateKey,
+    signingAlgorithm: { name: "ECDSA", hash: "SHA-256" },
+    extensions: [
+      new x509.SubjectAlternativeNameExtension([{ type: "dns", value: commonName }], false),
+    ],
+    notBefore: new Date(Date.now() - 60_000),
+    notAfter: new Date(Date.now() + 90 * 24 * 60 * 60_000),
+  });
+  return certificate.toString();
 }

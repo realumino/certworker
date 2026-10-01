@@ -28,7 +28,13 @@ export function DomainsView() {
   }
 
   async function remove(domain: Domain) {
-    if (!window.confirm(`Delete ${domain.name}? History and audit entries are kept (revocation lands in M7).`)) return;
+    if (
+      !window.confirm(
+        `Delete ${domain.name}? Its current certificate is revoked at Let's Encrypt and its stored key material is deleted; the row is kept for history and audit. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
     setActionError(null);
     try {
       await apiFetch(`/api/domains/${domain.id}`, { method: "DELETE" });

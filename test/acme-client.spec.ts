@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AcmeClient } from "../src/acme/client";
-import { AcmeError, isRateLimited } from "../src/acme/errors";
+import { AcmeError, AcmeProtocolError, isAlreadyRevoked, isRateLimited } from "../src/acme/errors";
 import { b64uDecode } from "../src/crypto/base64url";
 import { exportPublicJwk, generateEcP256KeyPair } from "../src/crypto/keys";
 import { createScriptedFetch, jsonResponse, type CapturedRequest } from "./support/fake-fetch";
@@ -338,6 +338,94 @@ describe("ACME v2 client", () => {
     const client = new AcmeClient({ directoryUrl: DIRECTORY_URL, accountKey, fetch: mock.fetch });
     await expect(client.ensureAccount()).resolves.toBe(ACCOUNT_URL);
     expect(mock.requests.some(({ request }) => request.method === "HEAD")).toBe(true);
+  });
+
+  it("revokes a certificate through the advertised revokeCert URL", async () => {
+    const accountKey = await generateEcP256KeyPair();
+    const nextNonce = nonceGenerator();
+    const mock = createScriptedFetch(async (captured) => {
+      if (captured.request.method === "GET") {
+        return jsonResponse({
+          newNonce: "https://acme.example.test/new-nonce",
+          newAccount: "https://acme.example.test/new-account",
+          newOrder: "https://acme.example.test/new-order",
+          revokeCert: "https://acme.example.test/revoke-cert",
+        }, { headers: { "Replay-Nonce": nextNonce() } });
+      }
+      const { protectedHeader, payload } = await inspectSignedRequest(captured, accountKey.publicKey);
+      if (captured.url.pathname === "/new-account") {
+        return jsonResponse({}, { status: 201, headers: { Location: ACCOUNT_URL, "Replay-Nonce": nextNonce() } });
+      }
+      expect(protectedHeader.kid).toBe(ACCOUNT_URL);
+      if (captured.url.pathname === "/revoke-cert") {
+        expect(payload).toEqual({ certificate: "AQID" });
+        return jsonResponse({}, { headers: { "Replay-Nonce": nextNonce() } });
+      }
+      throw new Error(`Unexpected ACME request: ${captured.request.method} ${captured.url.href}`);
+    });
+
+    const client = new AcmeClient({ directoryUrl: DIRECTORY_URL, accountKey, fetch: mock.fetch });
+    await client.ensureAccount();
+    await expect(client.revokeCertificate(Uint8Array.from([1, 2, 3]))).resolves.toBeUndefined();
+  });
+
+  it("surfaces the alreadyRevoked problem so callers can treat it as success", async () => {
+    const accountKey = await generateEcP256KeyPair();
+    const nextNonce = nonceGenerator();
+    const mock = createScriptedFetch(async (captured) => {
+      if (captured.request.method === "GET") {
+        return jsonResponse({
+          newNonce: "https://acme.example.test/new-nonce",
+          newAccount: "https://acme.example.test/new-account",
+          newOrder: "https://acme.example.test/new-order",
+          revokeCert: "https://acme.example.test/revoke-cert",
+        }, { headers: { "Replay-Nonce": nextNonce() } });
+      }
+      const { protectedHeader } = await inspectSignedRequest(captured, accountKey.publicKey);
+      if (captured.url.pathname === "/new-account") {
+        return jsonResponse({}, { status: 201, headers: { Location: ACCOUNT_URL, "Replay-Nonce": nextNonce() } });
+      }
+      expect(protectedHeader.kid).toBe(ACCOUNT_URL);
+      return jsonResponse({
+        type: "urn:ietf:params:acme:error:alreadyRevoked",
+        detail: "Certificate is already revoked",
+      }, { status: 400, headers: { "Replay-Nonce": nextNonce() } });
+    });
+
+    const client = new AcmeClient({ directoryUrl: DIRECTORY_URL, accountKey, fetch: mock.fetch });
+    await client.ensureAccount();
+    let caught: unknown;
+    try {
+      await client.revokeCertificate(Uint8Array.from([1, 2, 3]));
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AcmeError);
+    expect(isAlreadyRevoked(caught)).toBe(true);
+    expect(caught).toMatchObject({ detail: "Certificate is already revoked" });
+  });
+
+  it("fails loudly when the directory does not advertise revokeCert", async () => {
+    const accountKey = await generateEcP256KeyPair();
+    const nextNonce = nonceGenerator();
+    const mock = createScriptedFetch(async (captured) => {
+      if (captured.request.method === "GET") {
+        return jsonResponse({
+          newNonce: "https://acme.example.test/new-nonce",
+          newAccount: "https://acme.example.test/new-account",
+          newOrder: "https://acme.example.test/new-order",
+        }, { headers: { "Replay-Nonce": nextNonce() } });
+      }
+      const { protectedHeader } = await inspectSignedRequest(captured, accountKey.publicKey);
+      if (captured.url.pathname === "/new-account") {
+        return jsonResponse({}, { status: 201, headers: { Location: ACCOUNT_URL, "Replay-Nonce": nextNonce() } });
+      }
+      throw new Error(`Unexpected ACME request: ${captured.request.method} ${captured.url.href}`);
+    });
+
+    const client = new AcmeClient({ directoryUrl: DIRECTORY_URL, accountKey, fetch: mock.fetch });
+    await client.ensureAccount();
+    await expect(client.revokeCertificate(Uint8Array.from([1, 2, 3]))).rejects.toBeInstanceOf(AcmeProtocolError);
   });
 });
 

@@ -1,12 +1,21 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { createAdminDependencies, type AdminDependencies } from "../src/admin/deps";
-import { downloadCertificateHandler, getCertificateHandler, listCertificatesHandler } from "../src/admin/certificates";
+import {
+  downloadCertificateHandler,
+  getCertificateHandler,
+  listCertificatesHandler,
+  revokeCertificateHandler,
+} from "../src/admin/certificates";
+import { createIssueDependencies, ensureAcmeAccount } from "../src/issue/steps";
+import { listAuditLog } from "../src/store/d1";
 import { seedCertificate } from "./support/admin";
-import { readJson } from "./support/fake-fetch";
+import { createScriptedFetch, readJson } from "./support/fake-fetch";
+import { MockAcme, createSelfSignedCertificatePem } from "./support/mock-acme";
 import { seedDomain } from "./support/fixtures";
 
-const makeDeps = (): AdminDependencies => createAdminDependencies(env, "admin@example.com");
+const makeDeps = (fetcher?: typeof fetch): AdminDependencies =>
+  createAdminDependencies(env, "admin@example.com", fetcher ? { fetcher } : {});
 
 describe("admin certificates — list and detail", () => {
   it("lists certificates with domain names and filters", async () => {
@@ -181,5 +190,132 @@ describe("admin certificates — download", () => {
     );
     expect(purgedResponse.status).toBe(404);
     expect(await purgedResponse.json()).toMatchObject({ error: "certificate_artifacts_missing" });
+  });
+});
+
+describe("admin certificates — revoke", () => {
+  function acmeFetch() {
+    const acme = new MockAcme();
+    const { fetch, requests } = createScriptedFetch(async (request) => {
+      const response = await acme.handle(request);
+      if (response) return response;
+      throw new Error(`No offline mock for ${request.request.method} ${request.url.href}`);
+    });
+    return { acme, fetch, requests };
+  }
+
+  async function ensureAccount(fetcher: typeof fetch): Promise<void> {
+    await ensureAcmeAccount(createIssueDependencies(env, { fetcher }));
+  }
+
+  function revokeRequest(id: string): Request {
+    return new Request(`https://ssl.example.com/api/certificates/${id}/revoke`, {
+      method: "POST",
+      headers: {
+        "Origin": "https://ssl.example.com",
+        "Sec-Fetch-Site": "same-origin",
+        "Content-Type": "application/json",
+      },
+    });
+  }
+
+  async function seedRevocableCertificate(name: string) {
+    const domain = await seedDomain(env.DB, { name });
+    const certPem = await createSelfSignedCertificatePem(domain.name);
+    const certificate = await seedCertificate(env.DB, env.CERTS, domain.id, env.ENVELOPE_KEY, {
+      domainName: domain.name,
+      certPem,
+    });
+    return { domain, certPem, certificate };
+  }
+
+  it("revokes at the CA, purges R2, flips D1, and audits", async () => {
+    const { acme, fetch } = acmeFetch();
+    await ensureAccount(fetch);
+    const { domain, certificate } = await seedRevocableCertificate("revoke-admin.example.com");
+
+    const response = await revokeCertificateHandler(makeDeps(fetch), revokeRequest(certificate.id), { id: certificate.id });
+    expect(response.status).toBe(200);
+    const body = await readJson<{ certificate: Record<string, unknown>; status: string; purged: boolean }>(response);
+    expect(body).toMatchObject({ status: "revoked", purged: true });
+    expect(body.certificate).toMatchObject({ id: certificate.id, status: "revoked", purged_at: expect.any(String) });
+
+    expect(acme.revokedCertificates).toHaveLength(1);
+    expect((await env.CERTS.list({ prefix: `${certificate.r2_prefix}/` })).objects).toHaveLength(0);
+    await expect(
+      getCertificateHandler(
+        makeDeps(),
+        new Request("https://ssl.example.com/api/certificates/x"),
+        { id: certificate.id },
+      ),
+    ).resolves.toMatchObject({ status: 200 });
+
+    const audits = (await listAuditLog(env.DB, { limit: 50, offset: 0 })).filter(
+      ({ action }) => action === "certificate.revoke",
+    );
+    expect(audits).toHaveLength(1);
+    expect(JSON.parse(audits[0].meta_json ?? "{}")).toMatchObject({
+      domain_id: domain.id,
+      serial: certificate.serial,
+      ca_status: "revoked",
+      purged: true,
+    });
+  });
+
+  it("is idempotent: a repeat call skips the CA and still answers 200", async () => {
+    const { acme, fetch } = acmeFetch();
+    await ensureAccount(fetch);
+    const { certificate } = await seedRevocableCertificate("revoke-twice.example.com");
+
+    const first = await revokeCertificateHandler(makeDeps(fetch), revokeRequest(certificate.id), { id: certificate.id });
+    expect(first.status).toBe(200);
+    const second = await revokeCertificateHandler(makeDeps(fetch), revokeRequest(certificate.id), { id: certificate.id });
+    expect(second.status).toBe(200);
+    expect(await second.json()).toMatchObject({ status: "already_revoked", purged: true });
+    expect(acme.revokedCertificates).toHaveLength(1);
+  });
+
+  it("answers 502 with the LE error payload and leaves the row untouched on CA failure", async () => {
+    const acme = new MockAcme({ revokeFails: true });
+    const { fetch } = createScriptedFetch(async (request) => {
+      const response = await acme.handle(request);
+      if (response) return response;
+      throw new Error(`No offline mock for ${request.request.method} ${request.url.href}`);
+    });
+    await ensureAccount(fetch);
+    const { certificate } = await seedRevocableCertificate("revoke-fail.example.com");
+
+    const response = await revokeCertificateHandler(makeDeps(fetch), revokeRequest(certificate.id), { id: certificate.id });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ error: "upstream_error", message: expect.stringContaining("mock revocation rejected") });
+    await expect(env.DB.prepare("SELECT status, purged_at FROM certificates WHERE id = ?").bind(certificate.id).first())
+      .resolves.toMatchObject({ status: "current", purged_at: null });
+    expect((await env.CERTS.list({ prefix: `${certificate.r2_prefix}/` })).objects).toHaveLength(4);
+    expect(acme.revokedCertificates).toHaveLength(0);
+  });
+
+  it("answers 409 when the stored PEMs are gone", async () => {
+    const { acme, fetch } = acmeFetch();
+    await ensureAccount(fetch);
+    const domain = await seedDomain(env.DB, { name: "revoke-gone.example.com" });
+    const certificate = await seedCertificate(env.DB, env.CERTS, domain.id, env.ENVELOPE_KEY, {
+      domainName: domain.name,
+      storeArtifacts: false,
+    });
+
+    const response = await revokeCertificateHandler(makeDeps(fetch), revokeRequest(certificate.id), { id: certificate.id });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "certificate_artifacts_missing" });
+    expect(acme.revokedCertificates).toHaveLength(0);
+  });
+
+  it("answers 404 for an unknown certificate", async () => {
+    const response = await revokeCertificateHandler(
+      makeDeps(),
+      revokeRequest(crypto.randomUUID()),
+      { id: crypto.randomUUID() },
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "not_found" });
   });
 });

@@ -222,6 +222,14 @@ export class AcmeClient {
     return pem;
   }
 
+  /** RFC 8555 §7.6: POST the base64url DER of the certificate to `revokeCert`. */
+  async revokeCertificate(certificateDer: Uint8Array): Promise<void> {
+    if (certificateDer.length === 0) throw new TypeError("A non-empty DER-encoded certificate is required");
+    const directory = await this.getDirectory();
+    if (!directory.revokeCert) throw new AcmeProtocolError("ACME directory does not advertise revokeCert");
+    await this.signedPost(directory.revokeCert, { certificate: b64uEncode(certificateDer) }, "kid");
+  }
+
   async waitForAuthorizationValid(url: string, options: PollOptions = {}): Promise<AcmeAuthorization> {
     const timeoutMs = options.timeoutMs ?? DEFAULT_POLL_TIMEOUT_MS;
     const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;

@@ -150,6 +150,13 @@ export async function getIssueRun(db: D1Database, id: string): Promise<IssueRunR
   return db.prepare("SELECT * FROM issue_runs WHERE id = ?").bind(id).first<IssueRunRow>();
 }
 
+/** Idempotency check for date-scoped cron workflow IDs (`renew-<domainId>-<date>`). */
+export async function findIssueRunByWorkflowId(db: D1Database, workflowId: string): Promise<IssueRunRow | null> {
+  return db.prepare("SELECT * FROM issue_runs WHERE workflow_id = ? ORDER BY rowid DESC LIMIT 1")
+    .bind(workflowId)
+    .first<IssueRunRow>();
+}
+
 export async function recordRunPhase(db: D1Database, runId: string, phase: string): Promise<void> {
   const row = await db.prepare("SELECT steps_json FROM issue_runs WHERE id = ?")
     .bind(runId)
@@ -322,6 +329,14 @@ export async function markCertificatePurged(db: D1Database, id: string): Promise
       WHERE id = ? AND status != 'current'`,
   ).bind(new Date().toISOString(), id).run();
   if (result.meta.changes !== 1) throw new Error(`Certificate ${id} was not eligible to mark purged`);
+}
+
+/** Flip a certificate to `revoked`; false when another caller already did it. */
+export async function markCertificateRevoked(db: D1Database, id: string): Promise<boolean> {
+  const result = await db.prepare(
+    "UPDATE certificates SET status = 'revoked' WHERE id = ? AND status != 'revoked'",
+  ).bind(id).run();
+  return result.meta.changes === 1;
 }
 
 export interface DomainWithCertificateRow extends DomainRow {
@@ -584,6 +599,44 @@ export async function listDomainsForPull(db: D1Database): Promise<DomainWithCert
       WHERE d.status != 'deleted'
       ORDER BY d.name`,
   ).all<DomainWithCertificateRow>();
+  return results;
+}
+
+/**
+ * Active domains whose current certificate is missing or expires before
+ * `renew_before_days` from `nowIso`. The per-row window is applied inside the
+ * date modifier, so a single statement handles both triggers.
+ */
+export async function listDueDomains(db: D1Database, nowIso: string): Promise<DomainRow[]> {
+  const { results } = await db.prepare(
+    `SELECT d.*
+       FROM domains d
+       LEFT JOIN certificates c ON c.domain_id = d.id AND c.status = 'current'
+      WHERE d.status = 'active'
+        AND (c.id IS NULL OR datetime(c.not_after) <= datetime(?, '+' || d.renew_before_days || ' days'))
+      ORDER BY COALESCE(c.not_after, '') ASC, d.name`,
+  ).bind(nowIso).all<DomainRow>();
+  return results;
+}
+
+/** Superseded/revoked certificates whose R2 artifacts may still exist. */
+export async function listUnpurgedCertificates(db: D1Database): Promise<CertificateRow[]> {
+  const { results } = await db.prepare(
+    "SELECT * FROM certificates WHERE purged_at IS NULL AND status != 'current' ORDER BY created_at, id",
+  ).all<CertificateRow>();
+  return results;
+}
+
+/**
+ * Published TXT records the sweeper must clean: untouched by their run for
+ * longer than the cutoff (a live run's DNS timeout is minutes, the cutoff is 24 h).
+ */
+export async function listStaleChallengeRecords(db: D1Database, cutoffIso: string): Promise<ChallengeRecordRow[]> {
+  const { results } = await db.prepare(
+    `SELECT * FROM challenge_records
+      WHERE deleted_at IS NULL AND created_at < ? AND name LIKE '\\_acme-challenge.%' ESCAPE '\\'
+      ORDER BY created_at, id`,
+  ).bind(cutoffIso).all<ChallengeRecordRow>();
   return results;
 }
 

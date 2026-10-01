@@ -10,8 +10,10 @@ import {
   listZonesHandler,
   updateDomainHandler,
 } from "../src/admin/domains";
-import { getIssueRun, listAuditLog } from "../src/store/d1";
+import { getDomain, getIssueRun, listAuditLog } from "../src/store/d1";
+import { createIssueDependencies, ensureAcmeAccount } from "../src/issue/steps";
 import { createScriptedFetch, jsonResponse, readJson, type CapturedRequest } from "./support/fake-fetch";
+import { MockAcme, createSelfSignedCertificatePem, type MockAcmeOptions } from "./support/mock-acme";
 import { seedCertificate } from "./support/admin";
 import { seedDomain, seedIssueRun } from "./support/fixtures";
 import type { IssuePayload } from "../src/issue/types";
@@ -379,5 +381,122 @@ describe("admin zones", () => {
     const response = await listZonesHandler(makeDeps(fetch));
     expect(response.status).toBe(502);
     expect(await response.json()).toMatchObject({ error: "upstream_error" });
+  });
+});
+
+describe("admin domains — delete with revocation (M7)", () => {
+  function acmeFetch(options: MockAcmeOptions = {}) {
+    const acme = new MockAcme(options);
+    const { fetch } = createScriptedFetch(async (request) => {
+      const response = await acme.handle(request);
+      if (response) return response;
+      throw new Error(`No offline mock for ${request.request.method} ${request.url.href}`);
+    });
+    return { acme, fetch };
+  }
+
+  async function ensureAccount(fetcher: typeof fetch): Promise<void> {
+    await ensureAcmeAccount(createIssueDependencies(env, { fetcher }));
+  }
+
+  function deleteRequest(): Request {
+    return new Request("https://ssl.example.com/api/domains/x", { method: "DELETE" });
+  }
+
+  async function certificateRows(domainId: string): Promise<Array<Record<string, unknown>>> {
+    const { results } = await env.DB.prepare(
+      "SELECT id, status, purged_at, r2_prefix FROM certificates WHERE domain_id = ?",
+    ).bind(domainId).all();
+    return results;
+  }
+
+  it("revokes the current certificate, purges its artifacts, then soft-deletes", async () => {
+    const { acme, fetch } = acmeFetch();
+    await ensureAccount(fetch);
+    const domain = await seedDomain(env.DB, { name: "delete-revoke.example.com" });
+    const certPem = await createSelfSignedCertificatePem(domain.name);
+    const certificate = await seedCertificate(env.DB, env.CERTS, domain.id, env.ENVELOPE_KEY, {
+      domainName: domain.name,
+      certPem,
+    });
+
+    const response = await deleteDomainHandler(makeDeps(fetch), deleteRequest(), { id: domain.id });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "deleted" });
+
+    expect(acme.revokedCertificates).toHaveLength(1);
+    const rows = await certificateRows(domain.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "revoked", purged_at: expect.any(String) });
+    expect((await env.CERTS.list({ prefix: `${certificate.r2_prefix}/` })).objects).toHaveLength(0);
+    expect(await getDomain(env.DB, domain.id)).toMatchObject({ status: "deleted" });
+
+    const audits = (await listAuditLog(env.DB, { limit: 50, offset: 0 })).filter((row) => row.target === domain.id);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ action: "domain.delete" });
+    expect(JSON.parse(audits[0].meta_json ?? "{}")).toEqual({ name: domain.name, revoke: "revoked" });
+  });
+
+  it("fails the delete with 502 when revocation is rejected by the CA", async () => {
+    const { fetch } = acmeFetch({ revokeFails: true });
+    await ensureAccount(fetch);
+    const domain = await seedDomain(env.DB, { name: "delete-blocked.example.com" });
+    const certPem = await createSelfSignedCertificatePem(domain.name);
+    const certificate = await seedCertificate(env.DB, env.CERTS, domain.id, env.ENVELOPE_KEY, {
+      domainName: domain.name,
+      certPem,
+    });
+
+    const response = await deleteDomainHandler(makeDeps(fetch), deleteRequest(), { id: domain.id });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({
+      error: "upstream_error",
+      message: expect.stringContaining("mock revocation rejected"),
+    });
+    expect(await getDomain(env.DB, domain.id)).toMatchObject({ status: "active" });
+    expect(await certificateRows(domain.id)).toMatchObject([{ status: "current", purged_at: null }]);
+    expect((await env.CERTS.list({ prefix: `${certificate.r2_prefix}/` })).objects).toHaveLength(4);
+  });
+
+  it("records already_revoked when the CA answers that the certificate is revoked", async () => {
+    const { acme, fetch } = acmeFetch({ alreadyRevoked: true });
+    await ensureAccount(fetch);
+    const domain = await seedDomain(env.DB, { name: "delete-already.example.com" });
+    const certPem = await createSelfSignedCertificatePem(domain.name);
+    const certificate = await seedCertificate(env.DB, env.CERTS, domain.id, env.ENVELOPE_KEY, {
+      domainName: domain.name,
+      certPem,
+    });
+
+    const response = await deleteDomainHandler(makeDeps(fetch), deleteRequest(), { id: domain.id });
+    expect(response.status).toBe(200);
+    expect(await getDomain(env.DB, domain.id)).toMatchObject({ status: "deleted" });
+    // The mock counts only successful revocations; alreadyRevoked is not one.
+    expect(acme.revokedCertificates).toHaveLength(0);
+    const rows = await certificateRows(domain.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "revoked", purged_at: expect.any(String) });
+    expect((await env.CERTS.list({ prefix: `${certificate.r2_prefix}/` })).objects).toHaveLength(0);
+
+    const audits = (await listAuditLog(env.DB, { limit: 50, offset: 0 })).filter((row) => row.target === domain.id);
+    expect(JSON.parse(audits[0].meta_json ?? "{}")).toEqual({ name: domain.name, revoke: "already_revoked" });
+  });
+
+  it("deletes when revocation is impossible because artifacts are gone", async () => {
+    const { acme, fetch } = acmeFetch();
+    await ensureAccount(fetch);
+    const domain = await seedDomain(env.DB, { name: "delete-gone.example.com" });
+    await seedCertificate(env.DB, env.CERTS, domain.id, env.ENVELOPE_KEY, {
+      domainName: domain.name,
+      storeArtifacts: false,
+    });
+
+    const response = await deleteDomainHandler(makeDeps(fetch), deleteRequest(), { id: domain.id });
+    expect(response.status).toBe(200);
+    expect(await getDomain(env.DB, domain.id)).toMatchObject({ status: "deleted" });
+    expect(acme.revokedCertificates).toHaveLength(0);
+
+    const audits = (await listAuditLog(env.DB, { limit: 50, offset: 0 })).filter((row) => row.target === domain.id);
+    expect(JSON.parse(audits[0].meta_json ?? "{}")).toEqual({ name: domain.name, revoke: "artifacts_missing" });
   });
 });

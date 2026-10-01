@@ -1,3 +1,11 @@
+import { NonRetryableError } from "cloudflare:workflows";
+import { AcmeError, AcmeProtocolError } from "../acme/errors";
+import { issueErrorMessage } from "../issue/steps";
+import {
+  CertificateArtifactsMissingError,
+  revokeStoredCertificate,
+  type RevocationOutcome,
+} from "../issue/revoke";
 import { decryptEnvelope, importEnvelopeSecret } from "../crypto/envelope";
 import {
   getCertificate,
@@ -9,6 +17,7 @@ import {
 } from "../store/d1";
 import { certificatePrivateKeyKey, tryGetObjectBytes, tryGetObjectText } from "../store/r2";
 import type { AdminDependencies } from "./deps";
+import { recordAudit } from "./audit";
 import { errorResponse, jsonResponse, parseJsonArray, parsePagination } from "./http";
 
 const CERTIFICATE_STATUSES: readonly CertificateStatus[] = ["current", "superseded", "revoked"];
@@ -42,6 +51,38 @@ export async function getCertificateHandler(
   if (!row) return errorResponse(404, "not_found", "Certificate not found");
   const domain = await getDomain(deps.db, row.domain_id);
   return jsonResponse(certificateJson({ ...row, domain_name: domain?.name ?? "" }));
+}
+
+export async function revokeCertificateHandler(
+  deps: AdminDependencies,
+  _request: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const row = await getCertificate(deps.db, params.id);
+  if (!row) return errorResponse(404, "not_found", "Certificate not found");
+
+  let outcome: RevocationOutcome;
+  try {
+    outcome = await revokeStoredCertificate(deps, row);
+  } catch (error) {
+    if (error instanceof CertificateArtifactsMissingError) {
+      return errorResponse(409, "certificate_artifacts_missing", error.message);
+    }
+    if (error instanceof AcmeError || error instanceof AcmeProtocolError || error instanceof NonRetryableError) {
+      return errorResponse(502, "upstream_error", issueErrorMessage(error));
+    }
+    throw error;
+  }
+
+  await recordAudit(deps, "certificate.revoke", row.id, {
+    domain_id: row.domain_id,
+    serial: row.serial,
+    ca_status: outcome.status,
+    purged: outcome.purged,
+  });
+
+  const updated = (await getCertificate(deps.db, row.id)) ?? row;
+  return jsonResponse({ certificate: certificateJson(updated), ...outcome });
 }
 
 export async function downloadCertificateHandler(

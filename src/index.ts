@@ -1,6 +1,7 @@
 export { CertificateWorkflow } from "./issue/workflow";
 
 import { handleAdminApi } from "./admin/router";
+import { runCron } from "./issue/cron";
 import { handlePullApi } from "./nodes/router";
 
 export default {
@@ -19,8 +20,26 @@ export default {
     return env.ASSETS.fetch(request);
   },
 
-  async scheduled(controller: ScheduledController, _env: Env, _ctx: ExecutionContext): Promise<void> {
-    // M7: create workflow instances for due domains + run the sweeper.
-    console.log(JSON.stringify({ event: "cron.stub", cron: controller.cron, at: controller.scheduledTime }));
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    try {
+      const outcome = await runCron(env, { now: new Date(controller.scheduledTime) });
+      console.log(JSON.stringify({
+        event: "cron.complete",
+        cron: controller.cron,
+        date: outcome.date,
+        due: outcome.due,
+        started: outcome.started.length,
+        skipped: outcome.skipped.length,
+        sweeper: outcome.sweeper,
+      }));
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "cron.failed",
+        cron: controller.cron,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      // Retrying is safe: renewal IDs are date-scoped and the sweeper is idempotent.
+      throw error;
+    }
   },
 } satisfies ExportedHandler<Env>;
