@@ -10,7 +10,7 @@ pull periodically using per-node API keys (one key = one node).
 - Renewal: daily cron creates Cloudflare Workflow instances for due domains.
 - Requires the Workers **Paid** plan (free-tier CPU limits cannot perform issuance).
 
-Status: M0 + M1 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented; certificate revocation, key last-use tracking, and the pull API follow in M6/M7.
+Status: M0–M5 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). Certificate revocation, key last-use tracking, the pull API, and daily renewals follow in M6/M7.
 
 ## Local development
 
@@ -19,12 +19,16 @@ Prerequisites: Node.js >= 22 (Wrangler 4 requires it) and npm.
 ```sh
 npm install
 cp .dev.vars.example .dev.vars
-npm run build:web          # placeholder SPA -> web/dist (required before wrangler dev / vitest)
+npm run build:web          # builds the admin SPA -> web/dist (required before wrangler dev / vitest)
 npm run types              # regenerate worker-configuration.d.ts after changing wrangler.jsonc
 npm run db:migrate:local   # apply migrations to the local D1 database (.wrangler/state)
-npm test                   # workerd-pool unit tests
+npm test                   # workerd-pool tests + the SPA DOM suite (happy-dom)
 npm run dev                # wrangler dev on http://localhost:8787
 ```
+
+Iterating on the SPA: run `npm run dev` in one terminal and `npm run dev -w web` in a
+second. The Vite dev server on http://localhost:5173 hot-reloads and proxies `/api` to
+`wrangler dev` on port 8787.
 
 The admin API (`/api/*`) requires the `Cf-Access-Jwt-Assertion` header injected by
 Cloudflare Access; the Worker verifies its RS256 signature against the team JWKS

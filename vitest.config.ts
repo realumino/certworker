@@ -25,6 +25,8 @@ export default defineConfig(async () => {
       }),
     ],
     test: {
+      // Scoped to test/** so the web/ DOM suite (its own happy-dom config) stays out.
+      include: ["test/**/*.spec.ts"],
       setupFiles: ["./test/apply-migrations.ts"],
     },
   };
