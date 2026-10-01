@@ -55,6 +55,11 @@ export async function importEnvelopeKey(raw: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
+/** Import a standard-base64 ENVELOPE_KEY string as an AES-GCM key. */
+export async function importEnvelopeSecret(encoded: string): Promise<CryptoKey> {
+  return importEnvelopeKey(decodeEnvelopeSecret(encoded));
+}
+
 export async function encryptEnvelope(
   plaintext: Uint8Array,
   aad: string,

@@ -54,6 +54,7 @@ interface CloudflareZone {
   name: string;
   status?: string;
 }
+export type { CloudflareZone };
 
 interface CloudflareDnsRecord {
   id: string;
@@ -89,6 +90,37 @@ export async function findZoneId(options: FindZoneOptions): Promise<string> {
     404,
     [],
     `No Cloudflare zone found for ${normalized}; check Zone:Zone:Read access and the token's zone scope`,
+  );
+}
+
+export interface ListZonesOptions extends CloudflareRequestOptions {
+  perPage?: number;
+}
+
+export interface GetZoneOptions extends CloudflareRequestOptions {
+  zoneId: string;
+}
+
+export async function listZones(options: ListZonesOptions): Promise<CloudflareZone[]> {
+  const perPage = options.perPage ?? 50;
+  const url = makeUrl(options.apiBaseUrl, `/zones?per_page=${perPage}`);
+  return cloudflareRequest(
+    options,
+    url,
+    { method: "GET" },
+    "Zone:Zone:Read",
+    isCloudflareZoneList,
+  );
+}
+
+export async function getZone(options: GetZoneOptions): Promise<CloudflareZone> {
+  const url = makeUrl(options.apiBaseUrl, `/zones/${encodeURIComponent(options.zoneId)}`);
+  return cloudflareRequest(
+    options,
+    url,
+    { method: "GET" },
+    "Zone:Zone:Read",
+    isCloudflareZone,
   );
 }
 
@@ -215,10 +247,12 @@ function isApiErrorItem(value: unknown): value is CloudflareApiErrorItem {
 }
 
 function isCloudflareZoneList(value: unknown): value is CloudflareZone[] {
-  return Array.isArray(value) && value.every(
-    (zone) => isObject(zone) && typeof zone.id === "string" && typeof zone.name === "string" &&
-      (zone.status === undefined || typeof zone.status === "string"),
-  );
+  return Array.isArray(value) && value.every(isCloudflareZone);
+}
+
+function isCloudflareZone(value: unknown): value is CloudflareZone {
+  return isObject(value) && typeof value.id === "string" && typeof value.name === "string" &&
+    (value.status === undefined || typeof value.status === "string");
 }
 
 function isCloudflareDnsRecord(value: unknown): value is CloudflareDnsRecord {

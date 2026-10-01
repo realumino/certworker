@@ -5,7 +5,7 @@ via the Cloudflare DNS API), stores them in R2, and distributes them to nodes th
 pull periodically using per-node API keys. Admin surface is protected by Cloudflare
 Access; there is no application-level user login.
 
-Status: **M0 + M1 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes.**
+Status: **M0 + M1 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API (Access JWT verification, domains/certificates/runs/keys/pulls/audit handlers, mutation audit trail, loopback dev bypass) is implemented; certificate revocation and the DELETE-domain revoke step land in M7, key last-use tracking and the pull API in M6.**
 
 ---
 

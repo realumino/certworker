@@ -96,6 +96,18 @@ export async function getObjectText(bucket: R2Bucket, key: string): Promise<stri
   return object.text();
 }
 
+export async function tryGetObjectText(bucket: R2Bucket, key: string): Promise<string | null> {
+  const object = await bucket.get(key);
+  if (!object) return null;
+  return object.text();
+}
+
+export async function tryGetObjectBytes(bucket: R2Bucket, key: string): Promise<Uint8Array | null> {
+  const object = await bucket.get(key);
+  if (!object) return null;
+  return new Uint8Array(await object.arrayBuffer());
+}
+
 export async function deletePrefix(bucket: R2Bucket, prefix: string): Promise<void> {
   const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
   let cursor: string | undefined;

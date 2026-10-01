@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@abraham/reflection": "^0.13.0",
-    "@peculiar/x509": "^2.1.0"
+    "@peculiar/x509": "^2.1.0",
+    "jose": "^6.2.12"
   }
 }

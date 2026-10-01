@@ -29,3 +29,8 @@ export function jsonResponse(
   headers.set("Content-Type", "application/json");
   return new Response(JSON.stringify(value), { status: options.status ?? 200, headers });
 }
+
+/** Read a Response body as JSON with an expected shape. */
+export async function readJson<T>(response: Response): Promise<T> {
+  return (await response.json()) as T;
+}

@@ -3,3 +3,8 @@ ENVELOPE_KEY=
 
 # Cloudflare DNS API token scoped to Zone:DNS:Edit + Zone:Zone:Read
 CF_DNS_API_TOKEN=
+
+# Local-only: when set, /api/* skips Access JWT verification for requests from
+# loopback hosts (localhost / 127.0.0.1 / [::1]) and uses this email as the
+# audit actor. Empty in every deployed environment. See src/auth/access.ts.
+DEV_ACCESS_EMAIL=dev@example.com

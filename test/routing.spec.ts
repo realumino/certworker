@@ -9,11 +9,13 @@ describe("one-hostname routing", () => {
     await expect(res.json()).resolves.toMatchObject({ error: "unauthorized" });
   });
 
-  it("passes the Access gate when the header is present (handlers land in M4)", async () => {
+  it("rejects a malformed Access JWT before handler dispatch (M4 verification)", async () => {
     const res = await SELF.fetch("https://ssl.example.com/api/overview", {
-      headers: { "Cf-Access-Jwt-Assertion": "presence-only-at-M0" },
+      headers: { "Cf-Access-Jwt-Assertion": "not-a-jwt" },
     });
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    await expect(res.json()).resolves.toMatchObject({ error: "unauthorized" });
   });
 
   it("routes /v1/* to the worker, not to assets", async () => {

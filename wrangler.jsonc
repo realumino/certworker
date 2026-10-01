@@ -47,7 +47,10 @@
   "vars": {
     "ACCESS_TEAM_DOMAIN": "https://<team>.cloudflareaccess.com",
     "ACCESS_AUD": "<aud>",
-    "ACME_DIRECTORY": "https://acme-staging-v02.api.letsencrypt.org/directory"
+    "ACME_DIRECTORY": "https://acme-staging-v02.api.letsencrypt.org/directory",
+    // Local-dev-only bypass for /api/* (see src/auth/access.ts). Empty in every
+    // deployed environment; set DEV_ACCESS_EMAIL in .dev.vars for wrangler dev.
+    "DEV_ACCESS_EMAIL": ""
   },
   "secrets": {
     "required": ["CF_DNS_API_TOKEN", "ENVELOPE_KEY"]

@@ -10,7 +10,7 @@ pull periodically using per-node API keys (one key = one node).
 - Renewal: daily cron creates Cloudflare Workflow instances for due domains.
 - Requires the Workers **Paid** plan (free-tier CPU limits cannot perform issuance).
 
-Status: M0 + M1 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes.
+Status: M0 + M1 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented; certificate revocation, key last-use tracking, and the pull API follow in M6/M7.
 
 ## Local development
 
@@ -27,8 +27,17 @@ npm run dev                # wrangler dev on http://localhost:8787
 ```
 
 The admin API (`/api/*`) requires the `Cf-Access-Jwt-Assertion` header injected by
-Cloudflare Access; without it, requests are rejected with 401 by design (M4 adds real
-JWT verification and the handlers behind it).
+Cloudflare Access; the Worker verifies its RS256 signature against the team JWKS
+(`${ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`) plus `iss` and `aud`, rejecting
+everything else with 401. Mutations are additionally same-origin and JSON-only.
+Every admin mutation is recorded in the `audit_log` D1 table with the Access
+email as the actor.
+
+For local development behind `wrangler dev` (where no Access sits in front), set
+`DEV_ACCESS_EMAIL` in `.dev.vars`: requests from loopback hosts then skip JWT
+verification and use that email as the audit actor. The variable is empty in
+`wrangler.jsonc`, so deployed Workers never run the bypass — it is also
+unreachable on any non-loopback hostname.
 
 Deployment placeholders: `wrangler.jsonc` currently carries placeholder D1/R2 IDs.
 Replace them (`wrangler d1 create ssl-cert-worker`, `wrangler r2 bucket create
