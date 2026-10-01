@@ -1,0 +1,5 @@
+# Generate with: openssl rand -base64 32
+ENVELOPE_KEY=
+
+# Cloudflare DNS API token scoped to Zone:DNS:Edit + Zone:Zone:Read
+CF_DNS_API_TOKEN=

@@ -5,7 +5,7 @@ via the Cloudflare DNS API), stores them in R2, and distributes them to nodes th
 pull periodically using per-node API keys. Admin surface is protected by Cloudflare
 Access; there is no application-level user login.
 
-Status: **implementation in progress — M0 (scaffold) complete.**
+Status: **implementation in progress — M0 (scaffold) + M1 (crypto core) complete.**
 
 ---
 
@@ -129,6 +129,8 @@ All crypto uses Web Crypto; no Node built-ins.
 - CSR: `@peculiar/x509` v2 `Pkcs10CertificateRequestGenerator` with a SAN extension
   for all identifiers. Fallback if it misbehaves in workerd: hand-built ASN.1 CSR —
   the signature call is the same.
+- M1 validation: `@peculiar/x509@2.1.0` works in workerd when `@abraham/reflection` is
+  imported first; the hand-built CSR fallback is not required.
 - Certificate parsing (serial, `notAfter`, SANs): `new x509.X509Certificate(pem)`.
 
 Protocol details:
@@ -451,7 +453,7 @@ ssl-cert-worker/
 │  ├─ dns/cloudflare.ts      # TXT create/delete, zone lookup
 │  ├─ issue/workflow.ts      # CertificateWorkflow class
 │  ├─ store/                 # d1.ts, r2.ts
-│  ├─ crypto/                # keys.ts, csr.ts, envelope.ts
+│  ├─ crypto/                # base64url.ts, keys.ts, csr.ts, envelope.ts
 │  └─ auth/                  # access.ts (jose), api-key.ts
 ├─ migrations/0001_init.sql
 ├─ web/                      # Vite + React SPA → web/dist

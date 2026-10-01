@@ -24,5 +24,9 @@
     "typescript": "^5.5.2",
     "vitest": "~4.1.0",
     "wrangler": "^4.144.0"
+  },
+  "dependencies": {
+    "@abraham/reflection": "^0.13.0",
+    "@peculiar/x509": "^2.1.0"
   }
 }

@@ -10,7 +10,7 @@ pull periodically using per-node API keys (one key = one node).
 - Renewal: daily cron creates Cloudflare Workflow instances for due domains.
 - Requires the Workers **Paid** plan (free-tier CPU limits cannot perform issuance).
 
-Status: implementation in progress — M0 (scaffold) complete.
+Status: implementation in progress — M0 (scaffold) + M1 (crypto core) complete.
 
 ## Local development
 
@@ -18,10 +18,11 @@ Prerequisites: Node.js >= 22 (Wrangler 4 requires it) and npm.
 
 ```sh
 npm install
+cp .dev.vars.example .dev.vars
 npm run build:web          # placeholder SPA -> web/dist (required before wrangler dev / vitest)
 npm run types              # regenerate worker-configuration.d.ts after changing wrangler.jsonc
 npm run db:migrate:local   # apply migrations to the local D1 database (.wrangler/state)
-npm test                   # workerd-pool tests (routing + schema)
+npm test                   # workerd-pool tests (crypto + routing + schema)
 npm run dev                # wrangler dev on http://localhost:8787
 ```
 
