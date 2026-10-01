@@ -1,6 +1,7 @@
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { createScriptedFetch, jsonResponse } from "./fake-fetch";
 import { ACCESS_JWT_HEADER } from "../../src/auth/access";
+import { sha256Hex } from "../../src/crypto/keys";
 import { encryptEnvelope, importEnvelopeSecret } from "../../src/crypto/envelope";
 import { certificatePrefix, certificatePrivateKeyKey } from "../../src/store/r2";
 import type { ApiKeyRow, ApiKeyStatus, CertificateRow, CertificateStatus, PullEventRow } from "../../src/store/d1";
@@ -89,14 +90,21 @@ export function accessRequest(path: string, token: string, init: RequestInit = {
 
 export async function seedApiKey(
   db: D1Database,
-  options: { id?: string; label?: string; status?: ApiKeyStatus; allowedDomains?: string[] | null } = {},
+  options: {
+    id?: string;
+    label?: string;
+    status?: ApiKeyStatus;
+    allowedDomains?: string[] | null;
+    /** When given, `key_hash` is the SHA-256 of this secret (builds a usable token). */
+    secret?: string;
+  } = {},
 ): Promise<ApiKeyRow> {
   const id = options.id ?? crypto.randomUUID();
   const now = new Date().toISOString();
   const row: ApiKeyRow = {
     id,
     label: options.label ?? "node-1",
-    key_hash: `hash-${id}`,
+    key_hash: options.secret === undefined ? `hash-${id}` : await sha256Hex(options.secret),
     key_hint: `scw_${id}…1234`,
     allowed_domains_json: options.allowedDomains === undefined ? null : JSON.stringify(options.allowedDomains),
     status: options.status ?? "active",

@@ -355,7 +355,9 @@ async function loadDomainWithCertificate(
     certificate_env: certificate?.env ?? null,
     certificate_serial: certificate?.serial ?? null,
     certificate_sans_json: certificate?.sans_json ?? null,
+    certificate_not_before: certificate?.not_before ?? null,
     certificate_not_after: certificate?.not_after ?? null,
+    certificate_fingerprint_sha256: certificate?.fingerprint_sha256 ?? null,
   };
 }
 

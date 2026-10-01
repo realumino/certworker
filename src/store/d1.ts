@@ -329,7 +329,9 @@ export interface DomainWithCertificateRow extends DomainRow {
   certificate_env: string | null;
   certificate_serial: string | null;
   certificate_sans_json: string | null;
+  certificate_not_before: string | null;
   certificate_not_after: string | null;
+  certificate_fingerprint_sha256: string | null;
 }
 
 export interface IssueRunWithDomainRow extends IssueRunRow {
@@ -458,7 +460,8 @@ export async function listDomains(
     `SELECT d.id, d.name, d.zone_id, d.include_wildcard, d.key_type, d.renew_before_days,
             d.preferred_chain, d.status, d.last_error, d.created_at, d.updated_at,
             c.id AS certificate_id, c.env AS certificate_env, c.serial AS certificate_serial,
-            c.sans_json AS certificate_sans_json, c.not_after AS certificate_not_after
+            c.sans_json AS certificate_sans_json, c.not_before AS certificate_not_before,
+            c.not_after AS certificate_not_after, c.fingerprint_sha256 AS certificate_fingerprint_sha256
        FROM domains d
        LEFT JOIN certificates c ON c.domain_id = d.id AND c.status = 'current'${statusFilter}
       ORDER BY d.name LIMIT ? OFFSET ?`,
@@ -566,6 +569,22 @@ export async function revokeApiKey(db: D1Database, id: string): Promise<boolean>
       WHERE id = ? AND status = 'active'`,
   ).bind(new Date().toISOString(), id).run();
   return result.meta.changes === 1;
+}
+
+/** All non-deleted domains with their current certificate (no pagination; one node scale). */
+export async function listDomainsForPull(db: D1Database): Promise<DomainWithCertificateRow[]> {
+  const { results } = await db.prepare(
+    `SELECT d.id, d.name, d.zone_id, d.include_wildcard, d.key_type, d.renew_before_days,
+            d.preferred_chain, d.status, d.last_error, d.created_at, d.updated_at,
+            c.id AS certificate_id, c.env AS certificate_env, c.serial AS certificate_serial,
+            c.sans_json AS certificate_sans_json, c.not_before AS certificate_not_before,
+            c.not_after AS certificate_not_after, c.fingerprint_sha256 AS certificate_fingerprint_sha256
+       FROM domains d
+       LEFT JOIN certificates c ON c.domain_id = d.id AND c.status = 'current'
+      WHERE d.status != 'deleted'
+      ORDER BY d.name`,
+  ).all<DomainWithCertificateRow>();
+  return results;
 }
 
 export async function listPullEvents(

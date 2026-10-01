@@ -4,14 +4,14 @@ import { handleAdminApi } from "./admin/router";
 import { handlePullApi } from "./nodes/router";
 
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const { pathname } = new URL(request.url);
 
     if (pathname === "/api" || pathname.startsWith("/api/")) {
       return handleAdminApi(request, env);
     }
     if (pathname === "/v1" || pathname.startsWith("/v1/")) {
-      return handlePullApi(request, env);
+      return handlePullApi(request, env, ctx);
     }
 
     // Only reached when the worker is invoked for a non-API path; the asset

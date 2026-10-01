@@ -18,10 +18,18 @@ describe("one-hostname routing", () => {
     await expect(res.json()).resolves.toMatchObject({ error: "unauthorized" });
   });
 
-  it("routes /v1/* to the worker, not to assets", async () => {
+  it("routes /v1/* to the worker and requires an API key (M6)", async () => {
     const res = await SELF.fetch("https://ssl.example.com/v1/me");
-    expect(res.status).toBe(501);
+    expect(res.status).toBe(401);
     expect(res.headers.get("content-type")).toContain("application/json");
+    expect(res.headers.get("www-authenticate")).toBe("Bearer");
+    await expect(res.json()).resolves.toMatchObject({ error: "unauthorized" });
+  });
+
+  it("rejects non-GET pull requests", async () => {
+    const res = await SELF.fetch("https://ssl.example.com/v1/me", { method: "POST" });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("GET");
   });
 
   it("serves the SPA shell at /", async () => {

@@ -10,7 +10,7 @@ pull periodically using per-node API keys (one key = one node).
 - Renewal: daily cron creates Cloudflare Workflow instances for due domains.
 - Requires the Workers **Paid** plan (free-tier CPU limits cannot perform issuance).
 
-Status: M0–M5 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). Certificate revocation, key last-use tracking, the pull API, and daily renewals follow in M6/M7.
+Status: M0–M6 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). M6 node pull API is implemented (bearer keys, ETag/304, per-key rate limit, pull events, last-use tracking). Certificate revocation and daily renewals follow in M7.
 
 ## Local development
 
@@ -66,5 +66,38 @@ them into production storage. Any non-staging directory requires `--allow-produc
 
 The offline suite covers the ACME/Cloudflare DNS flows. The live staging run requires
 a real test zone and DNS token and has not yet been performed in this workspace.
+
+## Node pull API (M6)
+
+Nodes authenticate with a one-time `scw_<id>.<secret>` token created in the admin
+panel (POST /api/keys); only the SHA-256 of the secret is stored. All endpoints are
+GET-only under `ssl.example.com/v1/*`:
+
+```sh
+TOKEN=$(cat /etc/ssl-cert-worker/token)   # scw_<id>.<secret>
+
+# Manifest with metadata and all four PEMs (including the decrypted private key)
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  https://ssl.example.com/v1/domains/example.com/cert
+
+# Raw files: cert | chain | fullchain | key
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  https://ssl.example.com/v1/domains/example.com/files/fullchain
+
+# Cheap poll (scoped domains + current-cert metadata, no PEMs)
+curl -sS -H "Authorization: Bearer $TOKEN" https://ssl.example.com/v1/domains
+
+# Key identity and scope
+curl -sS -H "Authorization: Bearer $TOKEN" https://ssl.example.com/v1/me
+```
+
+Responses carry `ETag: "<serial>-<fingerprint>"` and `Cache-Control: no-store`.
+Sending the stored ETag back as `If-None-Match` returns `304` with no body and no
+decryption work; never reload on a `304`. Successful and failed per-domain pulls
+(`200`/`304`/`403`/`404`) are logged to `pull_events`, and `last_used_at` is
+throttled to one update per 60 s per key. Keys are rate limited (60 requests/60 s
+per key via the `PULL_LIMITER` binding) and rejected immediately once revoked.
+Domains are pulled by row name (`example.com` or `*.example.com`); a key whose
+`allowed_domains` is null may pull every non-deleted domain.
 
 Full design: [PLAN.md](./PLAN.md).
