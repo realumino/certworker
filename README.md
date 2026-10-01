@@ -10,7 +10,7 @@ pull periodically using per-node API keys (one key = one node).
 - Renewal: daily cron creates Cloudflare Workflow instances for due domains.
 - Requires the Workers **Paid** plan (free-tier CPU limits cannot perform issuance).
 
-Status: M0 (scaffold) + M1 (crypto core) complete. M2 ACME client and issuance script are implemented; live staging acceptance is still pending.
+Status: M0 + M1 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes.
 
 ## Local development
 

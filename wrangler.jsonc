@@ -48,5 +48,8 @@
     "ACCESS_TEAM_DOMAIN": "https://<team>.cloudflareaccess.com",
     "ACCESS_AUD": "<aud>",
     "ACME_DIRECTORY": "https://acme-staging-v02.api.letsencrypt.org/directory"
+  },
+  "secrets": {
+    "required": ["CF_DNS_API_TOKEN", "ENVELOPE_KEY"]
   }
 }
