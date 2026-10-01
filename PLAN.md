@@ -5,7 +5,7 @@ via the Cloudflare DNS API), stores them in R2, and distributes them to nodes th
 pull periodically using per-node API keys. Admin surface is protected by Cloudflare
 Access; there is no application-level user login.
 
-Status: **implementation in progress — M0 (scaffold) + M1 (crypto core) complete.**
+Status: **M0 (scaffold) + M1 (crypto core) complete. M2 client and acceptance script are implemented; live staging acceptance is pending.**
 
 ---
 
@@ -453,12 +453,14 @@ ssl-cert-worker/
 │  ├─ dns/cloudflare.ts      # TXT create/delete, zone lookup
 │  ├─ issue/workflow.ts      # CertificateWorkflow class
 │  ├─ store/                 # d1.ts, r2.ts
-│  ├─ crypto/                # base64url.ts, keys.ts, csr.ts, envelope.ts
+│  ├─ crypto/                # base64url.ts, keys.ts, csr.ts, envelope.ts, pem.ts, certificate.ts
 │  └─ auth/                  # access.ts (jose), api-key.ts
+├─ scripts/issue.ts           # LE staging acceptance script (Node + tsx)
+├─ scripts/tsconfig.json      # isolated Node script typecheck
 ├─ migrations/0001_init.sql
 ├─ web/                      # Vite + React SPA → web/dist
 ├─ tools/node-agent/         # script + systemd units
-├─ test/                     # vitest + workerd pool
+├─ test/                     # vitest + workerd pool and mocked ACME/DNS tests
 └─ wrangler.jsonc
 ```
 
@@ -504,12 +506,14 @@ Secrets (`wrangler secret put`): `CF_DNS_API_TOKEN`, `ENVELOPE_KEY`.
   an explicit opt-in.
 - Unit tests (`@cloudflare/vitest-pool-workers`): JWS vectors, DNS-01 value
   derivation, CSR round-trip + SAN parsing, name normalization/validation, envelope
-  encrypt→decrypt, routing/auth (Access JWT via local JWKS fixture; API keys).
-- One integration suite against LE **staging** on a dedicated test zone: full
-  issuance, then assert leaf SANs, leaf public key matches the stored key, chain
-  order, `not_after`; negative tests for bad key (401), DNS permission failure, CAA
-  denial, and cleanup-on-failure (no orphan TXT records).
-- Production LE is touched only by real domain rows via cron/manual — never by tests.
+  encrypt→decrypt, routing/auth (Access JWT via local JWKS fixture; API keys), and
+  mocked ACME/Cloudflare DNS protocol behavior.
+- M2 live acceptance is a manual run against LE **staging** on a dedicated test zone:
+  issue a certificate, assert SANs and leaf-key match, inspect the chain and expiry,
+  and verify TXT cleanup. It requires a real DNS token and has not yet been run in
+  this workspace. Production LE is never used by automated tests.
+- Production LE is never used by automated tests. The M2 script blocks non-staging
+  directories unless the operator explicitly passes `--allow-production`.
 
 ---
 

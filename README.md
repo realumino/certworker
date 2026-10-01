@@ -10,7 +10,7 @@ pull periodically using per-node API keys (one key = one node).
 - Renewal: daily cron creates Cloudflare Workflow instances for due domains.
 - Requires the Workers **Paid** plan (free-tier CPU limits cannot perform issuance).
 
-Status: implementation in progress — M0 (scaffold) + M1 (crypto core) complete.
+Status: M0 (scaffold) + M1 (crypto core) complete. M2 ACME client and issuance script are implemented; live staging acceptance is still pending.
 
 ## Local development
 
@@ -22,7 +22,7 @@ cp .dev.vars.example .dev.vars
 npm run build:web          # placeholder SPA -> web/dist (required before wrangler dev / vitest)
 npm run types              # regenerate worker-configuration.d.ts after changing wrangler.jsonc
 npm run db:migrate:local   # apply migrations to the local D1 database (.wrangler/state)
-npm test                   # workerd-pool tests (crypto + routing + schema)
+npm test                   # workerd-pool unit tests
 npm run dev                # wrangler dev on http://localhost:8787
 ```
 
@@ -33,5 +33,25 @@ JWT verification and the handlers behind it).
 Deployment placeholders: `wrangler.jsonc` currently carries placeholder D1/R2 IDs.
 Replace them (`wrangler d1 create ssl-cert-worker`, `wrangler r2 bucket create
 ssl-cert-artifacts`) before the first deploy.
+
+## M2 staging issuance
+
+Set `CF_DNS_API_TOKEN` in `.dev.vars` (or the process environment) with `Zone:Zone:Read`
+and `Zone:DNS:Edit` on a dedicated test zone, then run:
+
+```sh
+npm run issue -- example.com                  # apex + wildcard by default
+npm run issue -- '*.example.com'              # wildcard only
+npm run issue -- example.com --no-wildcard    # apex only
+```
+
+The script defaults to Let's Encrypt staging, waits for DNS-01 propagation through
+Cloudflare and Google DoH, and deletes its TXT records during cleanup. It stores the
+staging account and downloaded artifacts under `.wrangler/acme/` (gitignored). The
+local account and leaf private keys are plaintext development artifacts; do not copy
+them into production storage. Any non-staging directory requires `--allow-production`.
+
+The offline suite covers the ACME/Cloudflare DNS flows. The live staging run requires
+a real test zone and DNS token and has not yet been performed in this workspace.
 
 Full design: [PLAN.md](./PLAN.md).

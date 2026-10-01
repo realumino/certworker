@@ -48,7 +48,12 @@ export async function exportPublicJwk(publicKey: CryptoKey): Promise<EcPublicJwk
 }
 
 export async function jwkThumbprint<T extends JsonWebKey>(jwk: T): Promise<string> {
-  const members = REQUIRED_JWK_MEMBERS[jwk.kty];
+  const keyType = jwk.kty;
+  if (typeof keyType !== "string") {
+    throw new TypeError("JWK is missing required member: kty");
+  }
+
+  const members = REQUIRED_JWK_MEMBERS[keyType];
 
   if (members === undefined) {
     throw new RangeError(`Unsupported JWK key type: ${jwk.kty}`);
@@ -58,7 +63,7 @@ export async function jwkThumbprint<T extends JsonWebKey>(jwk: T): Promise<strin
     crv: jwk.crv,
     e: jwk.e,
     k: jwk.k,
-    kty: jwk.kty,
+    kty: keyType,
     n: jwk.n,
     x: jwk.x,
     y: jwk.y,
