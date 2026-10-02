@@ -8,7 +8,8 @@ pull periodically using per-node API keys (one key = one node).
 - Admin panel: static SPA behind Cloudflare Access; admin API re-verifies the Access JWT.
 - Node pull API: `ssl.example.com/v1/*`, Access bypass, bearer API keys, ETag/304.
 - Renewal: daily cron creates Cloudflare Workflow instances for due domains.
-- Requires the Workers **Paid** plan (free-tier CPU limits cannot perform issuance).
+- Runs on the Workers **Free** plan (Workflows is included on both plans; free allows
+  10 ms CPU per step). Paid removes the free daily limits and raises per-step CPU to 30 s.
 
 Status: M0–M8 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). M6 node pull API is implemented (bearer keys, ETag/304, per-key rate limit, pull events, last-use tracking). M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the production environment config. M8 adds the reference node agent and its onboarding runbook (`agent/`); live onboarding acceptance is pending.
 

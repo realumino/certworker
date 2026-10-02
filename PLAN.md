@@ -27,9 +27,12 @@ in v1 (ECDSA P-256 only). No non-Cloudflare DNS providers in v1 (a `DnsProvider`
 abstraction may be introduced later). No expiry-notification emails (Let's Encrypt
 removed them in 2025; the dashboard is the notification surface).
 
-**Platform requirement.** Workers **Paid** plan: the free tier's 10 ms CPU limit
-cannot perform issuance (EC/CSR/JWS crypto work), and Workflows/Queues features used
-here require Paid.
+**Platform requirement.** Both Workers plans run this. Workflows is available on
+the free plan (10 ms CPU per step and per invocation, 1,024 steps per workflow);
+the dominant `key+csr` step (P-256 keygen + CSR) measured ~0.5–1 ms in workerd, so
+the free limit is expected to suffice, though no free-plan deployment has been
+verified live. Paid raises the per-step CPU limit to 30 s (configurable to 5 min)
+and removes the free daily request/step limits. No Queues are used.
 
 ---
 
