@@ -393,7 +393,11 @@ export class AcmeClient {
   private async fetchRaw(url: string, init: RequestInit): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set("User-Agent", "ssl-cert-worker/0.1");
-    const response = await this.fetcher(url, {
+    // Call the fetcher standalone: workerd's global `fetch` throws an
+    // "Illegal invocation" TypeError when invoked as a method of another object
+    // (i.e. `this.fetcher(...)`), which is the production code path.
+    const fetcher = this.fetcher;
+    const response = await fetcher(url, {
       ...init,
       headers,
       redirect: "manual",

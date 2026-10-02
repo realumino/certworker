@@ -427,6 +427,42 @@ describe("ACME v2 client", () => {
     await client.ensureAccount();
     await expect(client.revokeCertificate(Uint8Array.from([1, 2, 3]))).rejects.toBeInstanceOf(AcmeProtocolError);
   });
+
+  it("calls the fetcher standalone so the workerd global fetch is not invoked as a method", async () => {
+    const accountKey = await generateEcP256KeyPair();
+    // A `function` (not an arrow) observes its receiver. workerd's global
+    // `fetch` throws "Illegal invocation" when called with a `this` that is not
+    // the global scope, so the client must invoke any fetcher standalone.
+    const strictFetch = function (this: unknown, ...args: Parameters<typeof fetch>): ReturnType<typeof fetch> {
+      if (this !== undefined) {
+        throw new TypeError("Illegal invocation: function called with incorrect `this` reference");
+      }
+      const [input, init] = args;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const method = init?.method ?? "GET";
+      if (method === "GET" && url.endsWith("/directory")) {
+        return Promise.resolve(jsonResponse({
+          newNonce: "https://acme.example.test/new-nonce",
+          newAccount: "https://acme.example.test/new-account",
+          newOrder: "https://acme.example.test/new-order",
+        }, { headers: { "Replay-Nonce": "n_1" } }));
+      }
+      if (method === "POST" && url.endsWith("/new-account")) {
+        return Promise.resolve(jsonResponse({ status: "valid" }, {
+          status: 201,
+          headers: { Location: ACCOUNT_URL, "Replay-Nonce": "n_2" },
+        }));
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    };
+
+    const client = new AcmeClient({
+      directoryUrl: DIRECTORY_URL,
+      accountKey,
+      fetch: strictFetch as unknown as typeof fetch,
+    });
+    await expect(client.ensureAccount()).resolves.toBe(ACCOUNT_URL);
+  });
 });
 
 function orderResource(status: string, certificate?: string): Record<string, unknown> {
