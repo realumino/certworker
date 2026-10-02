@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+#
+# ssl-cert-pull — reference node agent for ssl-cert-worker.
+#
+# Usage: ssl-cert-pull <domain> [domain ...]
+#
+# Pulls the current certificate for each domain from the node pull API and
+# installs it for nginx:
+#
+#   /etc/nginx/ssl/<domain>.pem          fullchain (leaf + intermediate chain)
+#   /etc/nginx/ssl/<domain>.key          private key, mode 600
+#   /etc/nginx/ssl/wildcard.<domain>.pem for a `*.example.com` row
+#
+# The manifest ETag is stored so repeat runs are no-ops (HTTP 304). New material
+# is staged as `<file>.new`, checked with openssl (parses, and the key matches
+# the certificate) and only then moved into place. nginx is tested and reloaded
+# once, after all domains have been processed. Any failure exits non-zero.
+#
+# Environment overrides (defaults in parentheses) exist for non-default layouts
+# and for the offline test harness:
+#   SSL_CERT_API        base URL of the pull API      (https://ssl.example.com/v1)
+#   SSL_CERT_CONF_DIR   holds `token` (0600)          (/etc/ssl-cert-worker)
+#   SSL_CERT_STATE_DIR  holds etags and staging files (/var/lib/ssl-cert-worker)
+#   SSL_CERT_OUT_DIR    destination for .pem and .key (/etc/nginx/ssl)
+set -euo pipefail
+
+API_BASE="${SSL_CERT_API:-https://ssl.example.com/v1}"
+CONF_DIR="${SSL_CERT_CONF_DIR:-/etc/ssl-cert-worker}"
+TOKEN_FILE="$CONF_DIR/token"
+STATE_DIR="${SSL_CERT_STATE_DIR:-/var/lib/ssl-cert-worker}"
+OUT_DIR="${SSL_CERT_OUT_DIR:-/etc/nginx/ssl}"
+
+log() { printf 'ssl-cert-pull: %s\n' "$*"; }
+err() { printf 'ssl-cert-pull: %s\n' "$*" >&2; }
+
+[[ $# -ge 1 ]] || { err "usage: ssl-cert-pull <domain> [domain ...]"; exit 2; }
+
+for cmd in curl jq openssl nginx; do
+  command -v "$cmd" >/dev/null || { err "$cmd is required but not installed"; exit 1; }
+done
+
+[[ -r "$TOKEN_FILE" ]] || { err "missing or unreadable token file: $TOKEN_FILE"; exit 1; }
+TOKEN="$(cat "$TOKEN_FILE")"
+[[ -n "$TOKEN" ]] || { err "token file is empty: $TOKEN_FILE"; exit 1; }
+
+umask 077
+mkdir -p "$STATE_DIR" "$OUT_DIR"
+
+changed=0
+failed=0
+
+for domain in "$@"; do
+  # Wildcard rows map to `wildcard.<name>` on disk, matching the admin download
+  # filenames; the API path keeps the literal `*.example.com`.
+  safe_name="${domain/#\*./wildcard.}"
+  etag_file="$STATE_DIR/$safe_name.etag"
+  tmp_body="$STATE_DIR/$safe_name.json.new"
+  tmp_headers="$STATE_DIR/$safe_name.headers.new"
+  tmp_cert="$OUT_DIR/$safe_name.pem.new"
+  tmp_key="$OUT_DIR/$safe_name.key.new"
+
+  curl_args=(-sS --proto '=https' --connect-timeout 10 --max-time 120
+             -D "$tmp_headers" -o "$tmp_body" -w '%{http_code}'
+             -H "Authorization: Bearer $TOKEN")
+  if [[ -f "$etag_file" ]]; then
+    curl_args+=(-H "If-None-Match: $(cat "$etag_file")")
+  fi
+
+  code="$(curl "${curl_args[@]}" "$API_BASE/domains/$domain/cert" || true)"
+
+  if [[ "$code" == "304" ]]; then
+    log "$domain unchanged"
+    rm -f "$tmp_body" "$tmp_headers"
+    continue
+  fi
+
+  if [[ "$code" != "200" ]]; then
+    content_type="$(awk 'tolower($1) == "content-type:" { sub(/\r$/, "", $2); ct = $2 } END { print ct }' "$tmp_headers" 2>/dev/null || true)"
+    err "$domain pull failed: HTTP ${code:-???}${content_type:+ (content-type: $content_type)}"
+    if [[ "$content_type" == text/html* ]]; then
+      err "$domain returned HTML; Cloudflare Access is probably blocking /v1 (app B must be Bypass, not Allow)"
+    elif [[ "$code" == "429" ]]; then
+      err "$domain is rate limited; the next timer run will retry"
+    fi
+    rm -f "$tmp_body" "$tmp_headers"
+    failed=1
+    continue
+  fi
+
+  invalid=0
+  if ! fullchain="$(jq -er '.fullchain_pem' "$tmp_body")"; then
+    err "$domain manifest is missing fullchain_pem"
+    invalid=1
+  fi
+  if ! privkey="$(jq -er '.private_key_pem' "$tmp_body")"; then
+    err "$domain manifest is missing private_key_pem"
+    invalid=1
+  fi
+  if ! new_etag="$(jq -er '.etag' "$tmp_body")"; then
+    err "$domain manifest is missing etag"
+    invalid=1
+  fi
+  if [[ $invalid -ne 0 ]]; then
+    rm -f "$tmp_body" "$tmp_headers"
+    failed=1
+    continue
+  fi
+
+  printf '%s\n' "$fullchain" > "$tmp_cert"
+  printf '%s\n' "$privkey" > "$tmp_key"
+  chmod 600 "$tmp_key"
+
+  openssl x509 -noout -in "$tmp_cert" 2>/dev/null \
+    || { err "$domain fullchain is not a valid certificate"; invalid=1; }
+  openssl pkey -noout -in "$tmp_key" 2>/dev/null \
+    || { err "$domain private key is not valid"; invalid=1; }
+  if [[ $invalid -eq 0 ]] \
+    && [[ "$(openssl x509 -noout -pubkey -in "$tmp_cert")" != "$(openssl pkey -pubout -in "$tmp_key")" ]]; then
+    err "$domain certificate and private key do not match"
+    invalid=1
+  fi
+  if [[ $invalid -ne 0 ]]; then
+    rm -f "$tmp_cert" "$tmp_key" "$tmp_body" "$tmp_headers"
+    failed=1
+    continue
+  fi
+
+  mv -f "$tmp_cert" "$OUT_DIR/$safe_name.pem"
+  mv -f "$tmp_key" "$OUT_DIR/$safe_name.key"
+  printf '%s\n' "$new_etag" > "$etag_file"
+  log "$domain updated (serial $(jq -r '.serial' "$tmp_body"))"
+  changed=1
+  rm -f "$tmp_body" "$tmp_headers"
+done
+
+if [[ $changed -eq 1 ]]; then
+  if nginx -t && nginx -s reload; then
+    log "nginx tested and reloaded"
+  else
+    err "nginx failed to test/reload after a certificate update"
+    failed=1
+  fi
+fi
+
+exit $failed

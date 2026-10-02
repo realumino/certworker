@@ -5,7 +5,7 @@ via the Cloudflare DNS API), stores them in R2, and distributes them to nodes th
 pull periodically using per-node API keys. Admin surface is protected by Cloudflare
 Access; there is no application-level user login.
 
-Status: **M0–M7 complete. M2 live staging acceptance is still pending. M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the `env.production` staging/prod split. M8 ships the node agent + runbook.**
+Status: **M0–M8 complete. M2 live staging acceptance and M8 live node onboarding are still pending. M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the `env.production` staging/prod split. M8 adds the reference node agent and onboarding runbook in `agent/`.**
 
 ---
 
@@ -395,49 +395,14 @@ Rate limiting binding per key; `allowed_domains_json = NULL` means all domains
 
 ## 11. Node agent (reference, shell)
 
-`tools/node-agent/` ships a script + systemd units. Contract: `304` = skip; write
-both files before reloading; never reload on a `304`; fail loudly on non-2xx; treat
-an HTML `Content-Type` on a non-200 as "Access is in the way" in the log line.
-
-```bash
-#!/usr/bin/env bash
-# /usr/local/bin/ssl-cert-pull
-set -euo pipefail
-API="https://ssl.example.com/v1"
-TOKEN="$(cat /etc/ssl-cert-worker/token)"          # chmod 600
-STATE="/var/lib/ssl-cert-worker"; CERTS="/etc/nginx/ssl"
-mkdir -p "$STATE" "$CERTS"
-
-for d in "$@"; do
-  etag_file="$STATE/$d.etag"
-  etag=$(cat "$etag_file" 2>/dev/null || true)
-  out="$STATE/$d.json"
-  code=$(curl -sS -o "$out" -w '%{http_code}' \
-    -H "Authorization: Bearer $TOKEN" \
-    ${etag:+-H "If-None-Match: $etag"} \
-    "$API/domains/$d/cert")
-  case "$code" in
-    304) continue ;;
-    200) ;;
-    *)   echo "pull failed for $d: HTTP $code" >&2; exit 1 ;;
-  esac
-  jq -r .fullchain_pem "$out"  > "$CERTS/$d.pem.new"
-  jq -r .private_key_pem "$out" > "$CERTS/$d.key.new"
-  chmod 600 "$CERTS/$d.key.new"
-  mv -f "$CERTS/$d.pem.new" "$CERTS/$d.pem"
-  mv -f "$CERTS/$d.key.new" "$CERTS/$d.key"
-  jq -r .etag "$out" > "$etag_file"
-  nginx -t && nginx -s reload
-done
-```
-
-```ini
-# /etc/systemd/system/ssl-cert-pull.timer
-[Timer]
-OnCalendar=*:0/15
-RandomizedDelaySec=300
-Persistent=true
-```
+`agent/` ships the reference implementation: `ssl-cert-pull` (pull, validate,
+install, reload), `ssl-cert-pull.service`, `ssl-cert-pull.timer`, and the onboarding
+runbook in `agent/README.md`. Contract: `304` = skip; never reload on a `304`; stage
+into `.new` files, validate them with `openssl` (parses, and the key matches the
+certificate) and only then move both into place; test and reload nginx once per run;
+fail loudly (non-zero) on any error; treat an HTML `Content-Type` on a non-200 as
+"Access is in the way" in the log line. Domains are `ExecStart` arguments; the API
+key lives at `/etc/ssl-cert-worker/token` (0600).
 
 ---
 
@@ -459,7 +424,7 @@ ssl-cert-worker/
 ├─ scripts/tsconfig.json      # isolated Node script typecheck
 ├─ migrations/0001_init.sql
 ├─ web/                      # Vite + React SPA → web/dist
-├─ tools/node-agent/         # script + systemd units
+├─ agent/                    # node agent script + systemd units + runbook
 ├─ test/                     # vitest + workerd pool and mocked ACME/DNS tests
 └─ wrangler.jsonc
 ```

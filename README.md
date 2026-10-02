@@ -10,7 +10,7 @@ pull periodically using per-node API keys (one key = one node).
 - Renewal: daily cron creates Cloudflare Workflow instances for due domains.
 - Requires the Workers **Paid** plan (free-tier CPU limits cannot perform issuance).
 
-Status: M0–M7 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). M6 node pull API is implemented (bearer keys, ETag/304, per-key rate limit, pull events, last-use tracking). M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the production environment config. The node agent and runbook follow in M8.
+Status: M0–M8 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). M6 node pull API is implemented (bearer keys, ETag/304, per-key rate limit, pull events, last-use tracking). M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the production environment config. M8 adds the reference node agent and its onboarding runbook (`agent/`); live onboarding acceptance is pending.
 
 ## Local development
 
@@ -126,5 +126,28 @@ throttled to one update per 60 s per key. Keys are rate limited (60 requests/60 
 per key via the `PULL_LIMITER` binding) and rejected immediately once revoked.
 Domains are pulled by row name (`example.com` or `*.example.com`); a key whose
 `allowed_domains` is null may pull every non-deleted domain.
+
+## Node agent (M8)
+
+`agent/` ships the reference node agent: a `ssl-cert-pull` shell script plus
+`ssl-cert-pull.service`/`.timer`, and the onboarding runbook in
+[agent/README.md](./agent/README.md). On a fresh node:
+
+```sh
+install -d -m 700 /etc/ssl-cert-worker
+umask 077
+printf '%s\n' 'scw_<id>.<secret>' > /etc/ssl-cert-worker/token   # from the admin Keys view
+chmod 600 /etc/ssl-cert-worker/token
+install -m 755 ssl-cert-pull /usr/local/bin/ssl-cert-pull
+install -m 644 ssl-cert-pull.service ssl-cert-pull.timer /etc/systemd/system/
+# edit SSL_CERT_API and ExecStart= in the service unit, then:
+systemctl daemon-reload
+systemctl start ssl-cert-pull.service     # first pull, installs .pem/.key under /etc/nginx/ssl
+systemctl enable --now ssl-cert-pull.timer
+```
+
+The agent polls every 15 minutes (±5 min jitter), skips unchanged certificates
+with `If-None-Match`/`304`, validates each pair with `openssl`, and reloads nginx
+only after a change. The node needs `curl`, `jq`, `openssl`, and nginx.
 
 Full design: [PLAN.md](./PLAN.md).

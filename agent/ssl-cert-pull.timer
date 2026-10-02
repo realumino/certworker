@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic TLS certificate pull from ssl-cert-worker
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=300
+Persistent=true
+Unit=ssl-cert-pull.service
+
+[Install]
+WantedBy=timers.target
