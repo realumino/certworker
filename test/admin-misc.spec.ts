@@ -74,7 +74,7 @@ describe("admin pulls listing", () => {
       api_key_label: expect.any(String),
       domain_name: expect.any(String),
       ip: "203.0.113.10",
-      user_agent: "ssl-cert-pull/1.0",
+      user_agent: "certworker-pull/1.0",
       status: 200,
     });
 

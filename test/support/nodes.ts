@@ -1,16 +1,16 @@
 /** Helpers for node pull API tests (bearer tokens + a collecting waitUntil). */
 import { vi } from "vitest";
 
-/** Build a `scw_<id>.<secret>` token from the parts a seeded row was created with. */
+/** Build a `cw_<id>.<secret>` token from the parts a seeded row was created with. */
 export function bearerToken(id: string, secret: string): string {
-  return `scw_${id}.${secret}`;
+  return `cw_${id}.${secret}`;
 }
 
 /** Node pull request (no Access headers — app B is bypassed; only the token matters). */
 export function pullRequest(path: string, token?: string, init: RequestInit = {}): Request {
   const headers: Record<string, string> = {
     "CF-Connecting-IP": "203.0.113.10",
-    "User-Agent": "ssl-cert-pull/1.0",
+    "User-Agent": "certworker-pull/1.0",
     ...(init.headers as Record<string, string> | undefined),
   };
   if (token !== undefined) headers.Authorization = `Bearer ${token}`;

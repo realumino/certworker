@@ -105,7 +105,7 @@ export async function seedApiKey(
     id,
     label: options.label ?? "node-1",
     key_hash: options.secret === undefined ? `hash-${id}` : await sha256Hex(options.secret),
-    key_hint: `scw_${id}…1234`,
+    key_hint: `cw_${id}…1234`,
     allowed_domains_json: options.allowedDomains === undefined ? null : JSON.stringify(options.allowedDomains),
     status: options.status ?? "active",
     created_at: now,
@@ -225,7 +225,7 @@ export async function seedPullEvent(
     domain_id: domainId,
     certificate_id: options.certificateId ?? null,
     ip: "203.0.113.10",
-    user_agent: "ssl-cert-pull/1.0",
+    user_agent: "certworker-pull/1.0",
     status: options.status ?? 200,
     created_at: new Date().toISOString(),
   };

@@ -5,7 +5,7 @@ export interface ApiKeyIdentity {
   key: ApiKeyRow;
 }
 
-const BEARER_TOKEN = /^Bearer\s+scw_([A-Za-z0-9-]+)\.([A-Za-z0-9_-]+)$/i;
+const BEARER_TOKEN = /^Bearer\s+cw_([A-Za-z0-9-]+)\.([A-Za-z0-9_-]+)$/i;
 
 export function parseBearerToken(header: string | null): { id: string; secret: string } | null {
   const match = BEARER_TOKEN.exec((header ?? "").trim());
@@ -28,7 +28,7 @@ export function constantTimeEqualHex(a: string, b: string): boolean {
 }
 
 /**
- * Verify a node's bearer token: parse `scw_<id>.<secret>`, look up the key by
+ * Verify a node's bearer token: parse `cw_<id>.<secret>`, look up the key by
  * its embedded id, hash the secret, and compare to the stored hash in constant
  * time. Unknown, revoked, or mismatched keys all produce the same 401.
  */
@@ -50,7 +50,7 @@ export async function authenticateApiKey(
 
 export function unauthorizedResponse(): Response {
   return Response.json(
-    { error: "unauthorized", message: "A valid node API key is required (Authorization: Bearer scw_<id>.<secret>)" },
+    { error: "unauthorized", message: "A valid node API key is required (Authorization: Bearer cw_<id>.<secret>)" },
     { status: 401, headers: { "Cache-Control": "no-store", "WWW-Authenticate": "Bearer" } },
   );
 }

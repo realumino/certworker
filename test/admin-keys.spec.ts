@@ -28,7 +28,7 @@ describe("admin API keys — create", () => {
 
     const body = await readJson<{ token: string; key: Record<string, unknown> }>(response);
     const token = body.token;
-    const withoutPrefix = token.replace(/^scw_/, "");
+    const withoutPrefix = token.replace(/^cw_/, "");
     const [id, secret] = withoutPrefix.split(".");
     expect(body.key).toMatchObject({ id, label: "node-1", status: "active" });
     expect(secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -36,7 +36,7 @@ describe("admin API keys — create", () => {
     const row = await getApiKey(env.DB, id);
     expect(row).not.toBeNull();
     expect(row?.key_hash).toBe(await sha256Hex(secret));
-    expect(row?.key_hint).toBe(`scw_${id}…${secret.slice(-4)}`);
+    expect(row?.key_hint).toBe(`cw_${id}…${secret.slice(-4)}`);
     expect(row?.allowed_domains_json).toBeNull();
 
     const listed = await listKeysHandler(makeDeps(), new Request("https://ssl.example.com/api/keys"));
@@ -98,7 +98,7 @@ describe("admin API keys — rotate", () => {
     expect(response.status).toBe(201);
 
     const body = await readJson<{ token: string; key: Record<string, unknown> }>(response);
-    const newId = body.token.replace(/^scw_/, "").split(".")[0];
+    const newId = body.token.replace(/^cw_/, "").split(".")[0];
     expect(body.key).toMatchObject({ id: newId, label: "node-1", status: "active" });
     expect(newId).not.toBe(seeded.id);
 

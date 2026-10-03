@@ -7,19 +7,19 @@ import { bearerToken, pullRequest } from "./support/nodes";
 const SECRET = "a".repeat(43);
 
 describe("bearer token parsing", () => {
-  it("accepts the `scw_<id>.<secret>` shape", () => {
-    expect(parseBearerToken("Bearer scw_abc-def.abc0_-")).toEqual({ id: "abc-def", secret: "abc0_-" });
-    expect(parseBearerToken("bearer scw_x.y")).toEqual({ id: "x", secret: "y" });
+  it("accepts the `cw_<id>.<secret>` shape", () => {
+    expect(parseBearerToken("Bearer cw_abc-def.abc0_-")).toEqual({ id: "abc-def", secret: "abc0_-" });
+    expect(parseBearerToken("bearer cw_x.y")).toEqual({ id: "x", secret: "y" });
   });
 
   it("rejects malformed or absent headers", () => {
     expect(parseBearerToken(null)).toBeNull();
     expect(parseBearerToken("")).toBeNull();
     expect(parseBearerToken("Basic abc")).toBeNull();
-    expect(parseBearerToken("scw_x.y")).toBeNull();
+    expect(parseBearerToken("cw_x.y")).toBeNull();
     expect(parseBearerToken("Bearer xyz.y")).toBeNull();
-    expect(parseBearerToken("Bearer scw_x")).toBeNull();
-    expect(parseBearerToken("Bearer scw_.y")).toBeNull();
+    expect(parseBearerToken("Bearer cw_x")).toBeNull();
+    expect(parseBearerToken("Bearer cw_.y")).toBeNull();
   });
 });
 

@@ -5,14 +5,14 @@ import { KeysView } from "../views/Keys";
 import { installFetchStub, json } from "./support";const KEY: ApiKey = {
   id: "k1",
   label: "web-01",
-  key_hint: "scw_k1…abcd",
+  key_hint: "cw_k1…abcd",
   status: "active",
   created_at: "2026-09-01T00:00:00.000Z",
   last_used_at: null,
   revoked_at: null,
 };
 
-const CREATED: CreatedApiKey = { key: KEY, token: "scw_k1.very-secret" };
+const CREATED: CreatedApiKey = { key: KEY, token: "cw_k1.very-secret" };
 
 /** happy-dom implements no window.confirm; install a controllable one. */
 function stubConfirm(result: boolean): ReturnType<typeof vi.fn> {
@@ -37,7 +37,7 @@ describe("api keys view", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create key" }));
 
     const token = (await screen.findByLabelText("Token for web-01")) as HTMLInputElement;
-    expect(token.value).toBe("scw_k1.very-secret");
+    expect(token.value).toBe("cw_k1.very-secret");
     expect(screen.getByText("only once")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Close — I stored the token" }));
@@ -49,7 +49,7 @@ describe("api keys view", () => {
     const confirmMock = stubConfirm(true);
     const stub = installFetchStub({
       "GET /api/keys": () => json([KEY]),
-      "POST /api/keys/k1/rotate": () => json({ key: { ...KEY, id: "k2" }, token: "scw_k2.fresh" }, 201),
+      "POST /api/keys/k1/rotate": () => json({ key: { ...KEY, id: "k2" }, token: "cw_k2.fresh" }, 201),
       "POST /api/keys/k1/revoke": () => json({ key: { ...KEY, status: "revoked" } }),
     });
     render(<KeysView />);
@@ -58,7 +58,7 @@ describe("api keys view", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Rotate" }));
     const token = (await screen.findByLabelText("Token for web-01")) as HTMLInputElement;
-    expect(token.value).toBe("scw_k2.fresh");
+    expect(token.value).toBe("cw_k2.fresh");
 
     fireEvent.click(screen.getByRole("button", { name: "Close — I stored the token" }));
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));

@@ -116,7 +116,7 @@ describe("admin router", () => {
     );
     expect(response.status).toBe(201);
     const body = await readJson<{ token: string }>(response);
-    expect(body.token).toMatch(/^scw_[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/);
+    expect(body.token).toMatch(/^cw_[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}$/);
   });
 
   it("dispatches POST /api/certificates/:id/revoke to the revoke handler (M7)", async () => {

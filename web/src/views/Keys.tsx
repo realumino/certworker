@@ -158,7 +158,7 @@ function TokenDialog({ created, onClose }: { created: CreatedApiKey; onClose: ()
     <Modal title="API key created" onClose={onClose}>
       <div className="banner banner-info" role="alert">
         This token is shown <strong>only once</strong>. Copy it now and store it on the node
-        (<code>/etc/ssl-cert-worker/token</code>); it cannot be retrieved later — only rotated.
+        (<code>/etc/certworker/token</code>); it cannot be retrieved later — only rotated.
       </div>
       <div className="field">
         <label htmlFor="token-value">Token for {created.key.label}</label>

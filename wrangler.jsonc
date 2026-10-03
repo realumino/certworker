@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "ssl-cert-worker",
+  "name": "certworker",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "assets": {
@@ -12,19 +12,19 @@
   },
   // Placeholder IDs are fine for local dev. Replace both before the first remote
   // command or deploy:
-  //   npx wrangler d1 create ssl-cert-worker
-  //   npx wrangler r2 bucket create ssl-cert-artifacts
+  //   npx wrangler d1 create certworker
+  //   npx wrangler r2 bucket create certworker-artifacts
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "ssl-cert-worker",
+      "database_name": "certworker",
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
   "r2_buckets": [
     {
       "binding": "CERTS",
-      "bucket_name": "ssl-cert-artifacts"
+      "bucket_name": "certworker-artifacts"
     }
   ],
   "workflows": [
@@ -72,14 +72,14 @@
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "ssl-cert-worker-prod",
+          "database_name": "certworker-prod",
           "database_id": "00000000-0000-0000-0000-000000000000"
         }
       ],
       "r2_buckets": [
         {
           "binding": "CERTS",
-          "bucket_name": "ssl-cert-artifacts-prod"
+          "bucket_name": "certworker-artifacts-prod"
         }
       ],
       "workflows": [

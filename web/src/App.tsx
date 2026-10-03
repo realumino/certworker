@@ -40,7 +40,7 @@ export function App() {
   return (
     <div className="shell">
       <aside className="sidebar">
-        <h1>ssl-cert-worker</h1>
+        <h1>certworker</h1>
         <nav>
           {NAV.map((item) => (
             <Link key={item.to} to={item.to} className={pattern === item.pattern ? "active" : undefined}>

@@ -79,7 +79,7 @@ function validLabel(body: Record<string, unknown>): string | Response {
 }
 
 /**
- * Generate a `scw_<id>.<secret>` token. Only the SHA-256 hex of the secret is
+ * Generate a `cw_<id>.<secret>` token. Only the SHA-256 hex of the secret is
  * stored; the plaintext token is returned exactly once to the caller.
  */
 async function generateKeyRecord(deps: AdminDependencies, label: string): Promise<{ row: ApiKeyRow; token: string }> {
@@ -89,12 +89,12 @@ async function generateKeyRecord(deps: AdminDependencies, label: string): Promis
     id,
     label,
     key_hash: await sha256Hex(secret),
-    key_hint: `scw_${id}…${secret.slice(-4)}`,
+    key_hint: `cw_${id}…${secret.slice(-4)}`,
     allowed_domains_json: null,
   });
   const row = await getApiKey(deps.db, id);
   if (!row) throw new Error(`API key ${id} is missing right after creation`);
-  return { row, token: `scw_${id}.${secret}` };
+  return { row, token: `cw_${id}.${secret}` };
 }
 
 function keyJson(row: ApiKeyRow): Record<string, unknown> {

@@ -1,4 +1,4 @@
-# ssl-cert-worker
+# certworker
 
 Issues TLS certificates from Let's Encrypt (ACME v2, DNS-01 via the Cloudflare DNS
 API) on Cloudflare Workers, stores them in R2, and distributes them to nodes that
@@ -45,8 +45,8 @@ verification and use that email as the audit actor. The variable is empty in
 unreachable on any non-loopback hostname.
 
 Deployment placeholders: `wrangler.jsonc` currently carries placeholder D1/R2 IDs.
-Replace them (`wrangler d1 create ssl-cert-worker`, `wrangler r2 bucket create
-ssl-cert-artifacts`) before the first deploy.
+Replace them (`wrangler d1 create certworker`, `wrangler r2 bucket create
+certworker-artifacts`) before the first deploy.
 
 ## M2 staging issuance
 
@@ -82,11 +82,11 @@ curl 'http://localhost:8787/__scheduled?cron=17+3+*+*+*'
 
 ## Staging and production (M7)
 
-`wrangler.jsonc` carries an `env.production` block: production ACME directory (`https://acme-v02.api.letsencrypt.org/directory`), separate D1 (`ssl-cert-worker-prod`) and R2 bucket (`ssl-cert-artifacts-prod`). Cron triggers and assets are inherited from the top level; deploy and configure it with:
+`wrangler.jsonc` carries an `env.production` block: production ACME directory (`https://acme-v02.api.letsencrypt.org/directory`), separate D1 (`certworker-prod`) and R2 bucket (`certworker-artifacts-prod`). Cron triggers and assets are inherited from the top level; deploy and configure it with:
 
 ```sh
-npx wrangler d1 create ssl-cert-worker-prod
-npx wrangler r2 bucket create ssl-cert-artifacts-prod   # paste both IDs into env.production
+npx wrangler d1 create certworker-prod
+npx wrangler r2 bucket create certworker-artifacts-prod   # paste both IDs into env.production
 npx wrangler d1 migrations apply DB --env production --remote
 npx wrangler secret put CF_DNS_API_TOKEN --env production
 npx wrangler secret put ENVELOPE_KEY --env production   # distinct from staging
@@ -97,12 +97,12 @@ Both environments share the single hostname: moving `ssl.example.com` from one W
 
 ## Node pull API (M6)
 
-Nodes authenticate with a one-time `scw_<id>.<secret>` token created in the admin
+Nodes authenticate with a one-time `cw_<id>.<secret>` token created in the admin
 panel (POST /api/keys); only the SHA-256 of the secret is stored. All endpoints are
 GET-only under `ssl.example.com/v1/*`:
 
 ```sh
-TOKEN=$(cat /etc/ssl-cert-worker/token)   # scw_<id>.<secret>
+TOKEN=$(cat /etc/certworker/token)   # cw_<id>.<secret>
 
 # Manifest with metadata and all four PEMs (including the decrypted private key)
 curl -sS -H "Authorization: Bearer $TOKEN" \
@@ -130,21 +130,21 @@ Domains are pulled by row name (`example.com` or `*.example.com`); a key whose
 
 ## Node agent (M8)
 
-`agent/` ships the reference node agent: a `ssl-cert-pull` shell script plus
-`ssl-cert-pull.service`/`.timer`, and the onboarding runbook in
+`agent/` ships the reference node agent: a `certworker-pull` shell script plus
+`certworker-pull.service`/`.timer`, and the onboarding runbook in
 [agent/README.md](./agent/README.md). On a fresh node:
 
 ```sh
-install -d -m 700 /etc/ssl-cert-worker
+install -d -m 700 /etc/certworker
 umask 077
-printf '%s\n' 'scw_<id>.<secret>' > /etc/ssl-cert-worker/token   # from the admin Keys view
-chmod 600 /etc/ssl-cert-worker/token
-install -m 755 ssl-cert-pull /usr/local/bin/ssl-cert-pull
-install -m 644 ssl-cert-pull.service ssl-cert-pull.timer /etc/systemd/system/
-# edit SSL_CERT_API and ExecStart= in the service unit, then:
+printf '%s\n' 'cw_<id>.<secret>' > /etc/certworker/token   # from the admin Keys view
+chmod 600 /etc/certworker/token
+install -m 755 certworker-pull /usr/local/bin/certworker-pull
+install -m 644 certworker-pull.service certworker-pull.timer /etc/systemd/system/
+# edit CERTWORKER_API and ExecStart= in the service unit, then:
 systemctl daemon-reload
-systemctl start ssl-cert-pull.service     # first pull, installs .pem/.key under /etc/nginx/ssl
-systemctl enable --now ssl-cert-pull.timer
+systemctl start certworker-pull.service     # first pull, installs .pem/.key under /etc/nginx/ssl
+systemctl enable --now certworker-pull.timer
 ```
 
 The agent polls every 15 minutes (±5 min jitter), skips unchanged certificates

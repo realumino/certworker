@@ -1,10 +1,10 @@
 [Unit]
-Description=Pull TLS certificates from ssl-cert-worker
+Description=Pull TLS certificates from certworker
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
 # Edit for this node: the Worker base URL and the domain rows to pull.
-Environment=SSL_CERT_API=https://ssl.example.com/v1
-ExecStart=/usr/local/bin/ssl-cert-pull example.com
+Environment=CERTWORKER_API=https://ssl.example.com/v1
+ExecStart=/usr/local/bin/certworker-pull example.com

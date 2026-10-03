@@ -66,7 +66,7 @@ One Worker, one deployable, **one hostname**: `ssl.example.com`.
 |---|---|---|---|
 | `/`, SPA routes | Static Assets (`ASSETS`) | A (`ssl.example.com`) | — |
 | `/api/*` | Admin API | A (`ssl.example.com`) | Access JWT (`iss` + `aud`) |
-| `/v1/*` | Node pull API | B (`ssl.example.com/v1`) | API key (`Bearer scw_…`) |
+| `/v1/*` | Node pull API | B (`ssl.example.com/v1`) | API key (`Bearer cw_…`) |
 
 Access evaluates the most specific path first, so `/v1/*` uses app B and never
 redirects to login. The layering is deliberately asymmetric:
@@ -240,7 +240,7 @@ CREATE TABLE api_keys (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,                    -- node name by convention
   key_hash TEXT NOT NULL,                 -- SHA-256 hex of the secret part
-  key_hint TEXT NOT NULL,                 -- scw_<id>…<last4>
+  key_hint TEXT NOT NULL,                 -- cw_<id>…<last4>
   allowed_domains_json TEXT,              -- NULL = all domains
   status TEXT NOT NULL DEFAULT 'active',  -- active | revoked
   created_at TEXT NOT NULL,
@@ -363,7 +363,7 @@ Compensation: steps 3–9 are wrapped in try/catch so `cleanup-txt` always runs;
 | `GET /domains/:name/cert` | JSON manifest: sans, serial, not_before/after, etag, `cert_pem`, `chain_pem`, `fullchain_pem`, `private_key_pem` |
 | `GET /domains/:name/files/:file` | raw `cert` / `chain` / `fullchain` / `key` for curl-friendly agents |
 
-Auth: `Authorization: Bearer scw_<id>.<secret>`. Only SHA-256(secret) is stored;
+Auth: `Authorization: Bearer cw_<id>.<secret>`. Only SHA-256(secret) is stored;
 lookup by the embedded id, constant-time hash comparison, revocation immediate.
 Responses carry `ETag` (serial + fingerprint) and `Cache-Control: no-store`;
 `If-None-Match` → `304` with no decrypt work. Successful pulls write `pull_events`
@@ -398,21 +398,21 @@ Rate limiting binding per key; `allowed_domains_json = NULL` means all domains
 
 ## 11. Node agent (reference, shell)
 
-`agent/` ships the reference implementation: `ssl-cert-pull` (pull, validate,
-install, reload), `ssl-cert-pull.service`, `ssl-cert-pull.timer`, and the onboarding
+`agent/` ships the reference implementation: `certworker-pull` (pull, validate,
+install, reload), `certworker-pull.service`, `certworker-pull.timer`, and the onboarding
 runbook in `agent/README.md`. Contract: `304` = skip; never reload on a `304`; stage
 into `.new` files, validate them with `openssl` (parses, and the key matches the
 certificate) and only then move both into place; test and reload nginx once per run;
 fail loudly (non-zero) on any error; treat an HTML `Content-Type` on a non-200 as
 "Access is in the way" in the log line. Domains are `ExecStart` arguments; the API
-key lives at `/etc/ssl-cert-worker/token` (0600).
+key lives at `/etc/certworker/token` (0600).
 
 ---
 
 ## 12. Repo layout and Wrangler config
 
 ```
-ssl-cert-worker/
+certworker/
 ├─ src/                      # Worker script
 │  ├─ index.ts               # fetch router (by path) + scheduled()
 │  ├─ admin/                 # admin API handlers
@@ -434,7 +434,7 @@ ssl-cert-worker/
 
 ```jsonc
 {
-  "name": "ssl-cert-worker",
+  "name": "certworker",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "assets": {
@@ -443,8 +443,8 @@ ssl-cert-worker/
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/v1/*"]
   },
-  "d1_databases": [{ "binding": "DB", "database_name": "ssl-cert-worker", "database_id": "<id>" }],
-  "r2_buckets": [{ "binding": "CERTS", "bucket_name": "ssl-cert-artifacts" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "certworker", "database_id": "<id>" }],
+  "r2_buckets": [{ "binding": "CERTS", "bucket_name": "certworker-artifacts" }],
   "workflows": [{ "name": "certificate-issuance", "binding": "ISSUANCE", "class_name": "CertificateWorkflow" }],
   "ratelimits": [{ "name": "PULL_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
   "triggers": { "crons": ["17 3 * * *"] },
@@ -457,8 +457,8 @@ ssl-cert-worker/
   "env": {
     "production": {
       "vars": { "ACME_DIRECTORY": "https://acme-v02.api.letsencrypt.org/directory" },
-      "d1_databases": [{ "binding": "DB", "database_name": "ssl-cert-worker-prod", "database_id": "<id>" }],
-      "r2_buckets": [{ "binding": "CERTS", "bucket_name": "ssl-cert-artifacts-prod" }]
+      "d1_databases": [{ "binding": "DB", "database_name": "certworker-prod", "database_id": "<id>" }],
+      "r2_buckets": [{ "binding": "CERTS", "bucket_name": "certworker-artifacts-prod" }]
     }
   }
 }

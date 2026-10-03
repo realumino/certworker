@@ -29,7 +29,7 @@ export async function generateEcP256KeyPair(): Promise<CryptoKeyPair> {
 
 /**
  * Lowercase hex SHA-256 of a string's UTF-8 bytes. Used to store API key
- * secrets (`scw_<id>.<secret>` — hash the secret part only, as UTF-8 text).
+ * secrets (`cw_<id>.<secret>` — hash the secret part only, as UTF-8 text).
  */
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));

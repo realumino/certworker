@@ -73,7 +73,7 @@ export interface ApiKeyRow {
   id: string;
   label: string;
   key_hash: string;                     // SHA-256 hex of the secret part
-  key_hint: string;                     // scw_<id>…<last4>
+  key_hint: string;                     // cw_<id>…<last4>
   allowed_domains_json: string | null;  // NULL = all domains
   status: ApiKeyStatus;
   created_at: string;

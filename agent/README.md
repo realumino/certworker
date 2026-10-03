@@ -1,18 +1,18 @@
 # Node agent (reference)
 
-Reference agent that pulls certificates from the ssl-cert-worker node pull API
+Reference agent that pulls certificates from the certworker node pull API
 (`/v1/*`) and installs them for nginx. It consists of three files plus the node's
 API key:
 
 | File | Installed to | Mode |
 |---|---|---|
-| `ssl-cert-pull` | `/usr/local/bin/ssl-cert-pull` | `755` |
-| `ssl-cert-pull.service` | `/etc/systemd/system/ssl-cert-pull.service` | `644` |
-| `ssl-cert-pull.timer` | `/etc/systemd/system/ssl-cert-pull.timer` | `644` |
-| token (from the admin panel) | `/etc/ssl-cert-worker/token` | `600` |
+| `certworker-pull` | `/usr/local/bin/certworker-pull` | `755` |
+| `certworker-pull.service` | `/etc/systemd/system/certworker-pull.service` | `644` |
+| `certworker-pull.timer` | `/etc/systemd/system/certworker-pull.timer` | `644` |
+| token (from the admin panel) | `/etc/certworker/token` | `600` |
 
 Per run and domain the script requests `GET /v1/domains/<name>/cert`, stores the
-manifest `ETag` under `/var/lib/ssl-cert-worker/` and installs:
+manifest `ETag` under `/var/lib/certworker/` and installs:
 
 ```
 /etc/nginx/ssl/<domain>.pem            fullchain (leaf + intermediate chain)
@@ -29,13 +29,13 @@ failed run leaves the previous pair serving.
 
 Requirements: Linux with systemd, nginx, and `curl`, `jq`, and `openssl`
 installed. The service runs as root (it writes `/etc/nginx/ssl` and reloads
-nginx). Environment overrides (`SSL_CERT_API`, `SSL_CERT_CONF_DIR`,
-`SSL_CERT_STATE_DIR`, `SSL_CERT_OUT_DIR`) exist for non-default layouts.
+nginx). Environment overrides (`CERTWORKER_API`, `CERTWORKER_CONF_DIR`,
+`CERTWORKER_STATE_DIR`, `CERTWORKER_OUT_DIR`) exist for non-default layouts.
 
 ## 1. Create the node key
 
 In the admin panel open **Keys**, create a key with the node name as its label,
-and copy the `scw_<id>.<secret>` token. It is shown **once**; only its hash is
+and copy the `cw_<id>.<secret>` token. It is shown **once**; only its hash is
 stored server-side. Revoking or rotating the key takes effect on the next run.
 
 ## 2. Install
@@ -43,33 +43,33 @@ stored server-side. Revoking or rotating the key takes effect on the next run.
 Copy the three files from a checkout of this repository to the node, then:
 
 ```sh
-install -d -m 700 /etc/ssl-cert-worker
+install -d -m 700 /etc/certworker
 umask 077
-printf '%s\n' 'scw_<id>.<secret>' > /etc/ssl-cert-worker/token
-chmod 600 /etc/ssl-cert-worker/token
+printf '%s\n' 'cw_<id>.<secret>' > /etc/certworker/token
+chmod 600 /etc/certworker/token
 
-install -m 755 ssl-cert-pull /usr/local/bin/ssl-cert-pull
-install -m 644 ssl-cert-pull.service ssl-cert-pull.timer /etc/systemd/system/
+install -m 755 certworker-pull /usr/local/bin/certworker-pull
+install -m 644 certworker-pull.service certworker-pull.timer /etc/systemd/system/
 ```
 
 Verify the token before going further:
 
 ```sh
-curl -sS -H "Authorization: Bearer $(cat /etc/ssl-cert-worker/token)" \
+curl -sS -H "Authorization: Bearer $(cat /etc/certworker/token)" \
   https://ssl.example.com/v1/me
 ```
 
 ## 3. Configure the node
 
-Edit `/etc/systemd/system/ssl-cert-pull.service`: set `SSL_CERT_API` to the
+Edit `/etc/systemd/system/certworker-pull.service`: set `CERTWORKER_API` to the
 Worker's pull API base URL and list the domain rows to pull in `ExecStart`.
 Use the exact names from the admin Domains view (`example.com`, or
 `*.example.com` for a wildcard-only row). A row with the wildcard toggle on
 covers both `example.com` and `*.example.com` with one file pair.
 
 ```ini
-Environment=SSL_CERT_API=https://ssl.example.com/v1
-ExecStart=/usr/local/bin/ssl-cert-pull example.com api.example.com
+Environment=CERTWORKER_API=https://ssl.example.com/v1
+ExecStart=/usr/local/bin/certworker-pull example.com api.example.com
 ```
 
 Then `systemctl daemon-reload`. Domains are passed as arguments (no config
@@ -81,13 +81,13 @@ literally.
 Run the service once before pointing an nginx server block at the new files:
 
 ```sh
-systemctl start ssl-cert-pull.service
-journalctl -u ssl-cert-pull.service -n 50 --no-pager
+systemctl start certworker-pull.service
+journalctl -u certworker-pull.service -n 50 --no-pager
 ls -l /etc/nginx/ssl
 ```
 
-Expected log lines: `ssl-cert-pull: example.com updated (serial …)` followed by
-`ssl-cert-pull: nginx tested and reloaded`. The key file is mode `600`.
+Expected log lines: `certworker-pull: example.com updated (serial …)` followed by
+`certworker-pull: nginx tested and reloaded`. The key file is mode `600`.
 
 ## 5. nginx
 
@@ -109,8 +109,8 @@ edit them by hand.
 ## 6. Enable the timer
 
 ```sh
-systemctl enable --now ssl-cert-pull.timer
-systemctl list-timers ssl-cert-pull.timer
+systemctl enable --now certworker-pull.timer
+systemctl list-timers certworker-pull.timer
 ```
 
 The timer runs every 15 minutes with up to 5 minutes of jitter and catches up
@@ -118,9 +118,9 @@ after downtime (`Persistent=true`).
 
 ## Operations
 
-- **Logs**: `journalctl -u ssl-cert-pull.service` (each run logs
+- **Logs**: `journalctl -u certworker-pull.service` (each run logs
   `unchanged`, `updated`, or a failure).
-- **Force a refresh**: `rm -f /var/lib/ssl-cert-worker/<domain>.etag && systemctl start ssl-cert-pull.service`
+- **Force a refresh**: `rm -f /var/lib/certworker/<domain>.etag && systemctl start certworker-pull.service`
   (a `304` means the stored ETag still matches; the ETag is keyed by the
   on-disk name, so `*.example.com` uses `wildcard.example.com.etag`).
 - **Rotate the key**: rotate in the admin Keys view, install the new token, run
@@ -130,8 +130,8 @@ after downtime (`Persistent=true`).
 - **Add or remove a domain**: edit `ExecStart`, `systemctl daemon-reload`, and
   run the service once. Removing a domain leaves its files in place; delete
   them manually if the vhost is gone too.
-- **Uninstall**: `systemctl disable --now ssl-cert-pull.timer`, remove the three
-  files, the token, `/var/lib/ssl-cert-worker`, and revoke the key in the admin
+- **Uninstall**: `systemctl disable --now certworker-pull.timer`, remove the three
+  files, the token, `/var/lib/certworker`, and revoke the key in the admin
   panel.
 
 ## Troubleshooting
@@ -147,4 +147,4 @@ after downtime (`Persistent=true`).
 | `HTTP 000` | The node cannot reach the Worker (DNS, firewall, TLS). |
 | `certificate and private key do not match` | The pull raced a renewal flip; nothing was installed and the next run heals it. |
 | `nginx failed to test/reload` | `nginx -t` output is in the log. The new files are already installed; fix the configuration and run `nginx -t` manually. |
-| Nothing logged at all | Check `systemctl status ssl-cert-pull.timer` and the unit's `SSL_CERT_API`/`ExecStart`. |
+| Nothing logged at all | Check `systemctl status certworker-pull.timer` and the unit's `CERTWORKER_API`/`ExecStart`. |

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# ssl-cert-pull — reference node agent for ssl-cert-worker.
+# certworker-pull — reference node agent for certworker.
 #
-# Usage: ssl-cert-pull <domain> [domain ...]
+# Usage: certworker-pull <domain> [domain ...]
 #
 # Pulls the current certificate for each domain from the node pull API and
 # installs it for nginx:
@@ -18,22 +18,22 @@
 #
 # Environment overrides (defaults in parentheses) exist for non-default layouts
 # and for the offline test harness:
-#   SSL_CERT_API        base URL of the pull API      (https://ssl.example.com/v1)
-#   SSL_CERT_CONF_DIR   holds `token` (0600)          (/etc/ssl-cert-worker)
-#   SSL_CERT_STATE_DIR  holds etags and staging files (/var/lib/ssl-cert-worker)
-#   SSL_CERT_OUT_DIR    destination for .pem and .key (/etc/nginx/ssl)
+#   CERTWORKER_API        base URL of the pull API       (https://ssl.example.com/v1)
+#   CERTWORKER_CONF_DIR   holds `token` (0600)           (/etc/certworker)
+#   CERTWORKER_STATE_DIR  holds etags and staging files  (/var/lib/certworker)
+#   CERTWORKER_OUT_DIR    destination for .pem and .key  (/etc/nginx/ssl)
 set -euo pipefail
 
-API_BASE="${SSL_CERT_API:-https://ssl.example.com/v1}"
-CONF_DIR="${SSL_CERT_CONF_DIR:-/etc/ssl-cert-worker}"
+API_BASE="${CERTWORKER_API:-https://ssl.example.com/v1}"
+CONF_DIR="${CERTWORKER_CONF_DIR:-/etc/certworker}"
 TOKEN_FILE="$CONF_DIR/token"
-STATE_DIR="${SSL_CERT_STATE_DIR:-/var/lib/ssl-cert-worker}"
-OUT_DIR="${SSL_CERT_OUT_DIR:-/etc/nginx/ssl}"
+STATE_DIR="${CERTWORKER_STATE_DIR:-/var/lib/certworker}"
+OUT_DIR="${CERTWORKER_OUT_DIR:-/etc/nginx/ssl}"
 
-log() { printf 'ssl-cert-pull: %s\n' "$*"; }
-err() { printf 'ssl-cert-pull: %s\n' "$*" >&2; }
+log() { printf 'certworker-pull: %s\n' "$*"; }
+err() { printf 'certworker-pull: %s\n' "$*" >&2; }
 
-[[ $# -ge 1 ]] || { err "usage: ssl-cert-pull <domain> [domain ...]"; exit 2; }
+[[ $# -ge 1 ]] || { err "usage: certworker-pull <domain> [domain ...]"; exit 2; }
 
 for cmd in curl jq openssl nginx; do
   command -v "$cmd" >/dev/null || { err "$cmd is required but not installed"; exit 1; }

@@ -70,7 +70,7 @@ CREATE TABLE api_keys (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,                    -- node name by convention
   key_hash TEXT NOT NULL,                 -- SHA-256 hex of the secret part
-  key_hint TEXT NOT NULL,                 -- scw_<id>...<last4>
+  key_hint TEXT NOT NULL,                 -- cw_<id>...<last4>
   allowed_domains_json TEXT,              -- NULL = all domains
   status TEXT NOT NULL DEFAULT 'active',  -- active | revoked
   created_at TEXT NOT NULL,

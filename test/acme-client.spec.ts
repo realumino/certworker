@@ -45,7 +45,7 @@ describe("ACME v2 client", () => {
       }
 
       const { protectedHeader, payload } = await inspectSignedRequest(captured, accountKey.publicKey);
-      expect(request.headers.get("user-agent")).toBe("ssl-cert-worker/0.1");
+      expect(request.headers.get("user-agent")).toBe("certworker/0.1");
 
       if (url.pathname === "/new-account") {
         expect(protectedHeader.jwk).toEqual(publicJwk);
