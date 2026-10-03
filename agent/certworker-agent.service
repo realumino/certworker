@@ -9,4 +9,4 @@ Type=oneshot
 Environment=CERTWORKER_API=https://certworker.example.org/v1
 # Optional: run after a certificate changes (omit to install files only).
 # Environment=CERTWORKER_RELOAD_CMD=nginx -t && nginx -s reload
-ExecStart=/usr/local/bin/certworker-pull example.com
+ExecStart=/usr/local/bin/certworker-agent example.com

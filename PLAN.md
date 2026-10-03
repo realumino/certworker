@@ -398,8 +398,8 @@ Rate limiting binding per key; `allowed_domains_json = NULL` means all domains
 
 ## 11. Node agent (reference, shell)
 
-`agent/` ships the reference implementation: `certworker-pull` (pull, validate,
-install, optional reload), `certworker-pull.service`, `certworker-pull.timer`, and the
+`agent/` ships the reference implementation: `certworker-agent` (pull, validate,
+install, optional reload), `certworker-agent.service`, `certworker-agent.timer`, and the
 onboarding runbook in `agent/README.md`. The agent has no web-server coupling: it
 fetches the raw `fullchain` (and `key`) from `/v1/domains/<name>/files/...` — no JSON,
 so `jq` is not needed — installs into app-owned `/etc/certworker/{certs,private}`

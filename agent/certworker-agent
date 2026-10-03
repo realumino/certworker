@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# certworker-pull — reference node agent for certworker.
+# certworker-agent — reference node agent for certworker.
 #
-# Usage: certworker-pull <domain> [domain ...]
+# Usage: certworker-agent <domain> [domain ...]
 #
 # Pulls the current certificate for each domain from the node pull API and
 # installs it to an app-owned location (no web-server coupling):
@@ -36,8 +36,8 @@ CERT_DIR="${CERTWORKER_CERT_DIR:-/etc/certworker/certs}"
 KEY_DIR="${CERTWORKER_KEY_DIR:-/etc/certworker/private}"
 RELOAD_CMD="${CERTWORKER_RELOAD_CMD:-}"
 
-log() { printf 'certworker-pull: %s\n' "$*"; }
-err() { printf 'certworker-pull: %s\n' "$*" >&2; }
+log() { printf 'certworker-agent: %s\n' "$*"; }
+err() { printf 'certworker-agent: %s\n' "$*" >&2; }
 
 # Pull failures are logged with the content type so an HTML body from an
 # intercepting proxy (Cloudflare Access) is obvious.
@@ -56,7 +56,7 @@ header_value() {
   awk -v name="$2" 'tolower($1) == name { $1=""; sub(/^ /,""); sub(/\r$/,""); last=$0 } END { print last }' "$1"
 }
 
-[[ $# -ge 1 ]] || { err "usage: certworker-pull <domain> [domain ...]"; exit 2; }
+[[ $# -ge 1 ]] || { err "usage: certworker-agent <domain> [domain ...]"; exit 2; }
 
 for cmd in curl openssl; do
   command -v "$cmd" >/dev/null || { err "$cmd is required but not installed"; exit 1; }

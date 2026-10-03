@@ -232,7 +232,7 @@ describe("pull observability", () => {
       domain_id: domain.id,
       certificate_id: certificate.id,
       ip: "203.0.113.10",
-      user_agent: "certworker-pull/1.0",
+      user_agent: "certworker-agent/1.0",
       status: 200,
     });
     const firstUsedAt = (await getApiKey(env.DB, key.id))?.last_used_at;

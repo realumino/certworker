@@ -10,7 +10,7 @@ export function bearerToken(id: string, secret: string): string {
 export function pullRequest(path: string, token?: string, init: RequestInit = {}): Request {
   const headers: Record<string, string> = {
     "CF-Connecting-IP": "203.0.113.10",
-    "User-Agent": "certworker-pull/1.0",
+    "User-Agent": "certworker-agent/1.0",
     ...(init.headers as Record<string, string> | undefined),
   };
   if (token !== undefined) headers.Authorization = `Bearer ${token}`;

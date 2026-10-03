@@ -5,7 +5,7 @@ Description=Periodic TLS certificate pull from certworker
 OnCalendar=*:0/15
 RandomizedDelaySec=300
 Persistent=true
-Unit=certworker-pull.service
+Unit=certworker-agent.service
 
 [Install]
 WantedBy=timers.target

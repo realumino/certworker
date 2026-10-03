@@ -225,7 +225,7 @@ export async function seedPullEvent(
     domain_id: domainId,
     certificate_id: options.certificateId ?? null,
     ip: "203.0.113.10",
-    user_agent: "certworker-pull/1.0",
+    user_agent: "certworker-agent/1.0",
     status: options.status ?? 200,
     created_at: new Date().toISOString(),
   };

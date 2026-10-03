@@ -2,7 +2,7 @@
 
 ## Introduction
 
-`certworker-pull` is the reference node agent for CertWorker. It runs on each
+`certworker-agent` is the reference node agent for CertWorker. It runs on each
 node under a systemd timer, pulls the current certificate and private key for
 the node's domains from the CertWorker pull API (`/v1/*`), and installs them
 into an app-owned directory. It has **no web-server coupling**: when the
@@ -54,8 +54,8 @@ install -d -m 755 /etc/certworker/certs
 install -d -m 700 /etc/certworker/private
 install -d -m 700 /var/lib/certworker
 
-install -m 755 certworker-pull /usr/local/bin/certworker-pull
-install -m 644 certworker-pull.service certworker-pull.timer /etc/systemd/system/
+install -m 755 certworker-agent /usr/local/bin/certworker-agent
+install -m 644 certworker-agent.service certworker-agent.timer /etc/systemd/system/
 
 umask 077
 printf '%s\n' 'cw_<id>.<secret>' > /etc/certworker/token
@@ -71,13 +71,13 @@ curl -sS -H "Authorization: Bearer $(cat /etc/certworker/token)" \
 
 ### 3. Edit the service unit
 
-Edit `/etc/systemd/system/certworker-pull.service` for this node: the pull API
+Edit `/etc/systemd/system/certworker-agent.service` for this node: the pull API
 base URL, the domain rows to pull, and optionally a reload command:
 
 ```ini
 Environment=CERTWORKER_API=https://certworker.example.org/v1
 Environment=CERTWORKER_RELOAD_CMD=nginx -t && nginx -s reload
-ExecStart=/usr/local/bin/certworker-pull example.com api.example.com
+ExecStart=/usr/local/bin/certworker-agent example.com api.example.com
 ```
 
 Use the exact domain names shown in the admin **Domains** view: `example.com`,
@@ -97,21 +97,21 @@ systemctl daemon-reload
 Run the service once before pointing a web server at the new files:
 
 ```sh
-systemctl start certworker-pull.service
-journalctl -u certworker-pull.service -n 50 --no-pager
+systemctl start certworker-agent.service
+journalctl -u certworker-agent.service -n 50 --no-pager
 ls -l /etc/certworker/certs /etc/certworker/private
 ```
 
-Expected log lines: `certworker-pull: example.com updated (serial …)`, followed
-by `certworker-pull: reload command succeeded` (only if a reload command is
+Expected log lines: `certworker-agent: example.com updated (serial …)`, followed
+by `certworker-agent: reload command succeeded` (only if a reload command is
 set). Subsequent runs log `unchanged` and reload nothing. A failure exits
 non-zero and is described in the journal.
 
 ### 5. Enable the timer
 
 ```sh
-systemctl enable --now certworker-pull.timer
-systemctl list-timers certworker-pull.timer
+systemctl enable --now certworker-agent.timer
+systemctl list-timers certworker-agent.timer
 ```
 
 The timer runs every 15 minutes with up to 5 minutes of jitter and catches up
@@ -124,9 +124,9 @@ these runs; only a changed certificate triggers the reload command.
 
 | File | Installed to | Mode |
 |---|---|---|
-| `certworker-pull` | `/usr/local/bin/certworker-pull` | `755` |
-| `certworker-pull.service` | `/etc/systemd/system/certworker-pull.service` | `644` |
-| `certworker-pull.timer` | `/etc/systemd/system/certworker-pull.timer` | `644` |
+| `certworker-agent` | `/usr/local/bin/certworker-agent` | `755` |
+| `certworker-agent.service` | `/etc/systemd/system/certworker-agent.service` | `644` |
+| `certworker-agent.timer` | `/etc/systemd/system/certworker-agent.timer` | `644` |
 | token (from the admin panel) | `/etc/certworker/token` | `600` |
 
 **Written by the agent** (its only footprint on the node):
