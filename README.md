@@ -11,7 +11,9 @@ pull periodically using per-node API keys (one key = one node).
 - Runs on the Workers **Free** plan (Workflows is included on both plans; free allows
   10 ms CPU per step). Paid removes the free daily limits and raises per-step CPU to 30 s.
 
-Status: M0–M8 complete. M2 ACME client and issuance script are implemented; live staging acceptance is pending. M3 persistence, Workflow pipeline, and internal manual trigger are implemented; offline workerd acceptance passes. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). M6 node pull API is implemented (bearer keys, ETag/304, per-key rate limit, pull events, last-use tracking). M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the production environment config. M8 adds the reference node agent and its onboarding runbook (`agent/`); live onboarding acceptance is pending.
+Status: M0–M8 complete. M2 ACME client and issuance script issued a Let's Encrypt **staging** certificate live (SANs, chain, leaf-key match, and TXT cleanup verified). M3 persistence, Workflow pipeline, and internal manual trigger are implemented; the deployed Workflow issued end-to-end in ~40 s. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). M6 node pull API is implemented (bearer keys, ETag/304, per-key rate limit, pull events, last-use tracking). M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the production environment config. M8 adds the reference node agent and its onboarding runbook (`agent/`); live onboarding on a Linode node passed (systemd units, nginx reload, `304` no-op, revoked key rejected).
+
+Live execution surfaced a workerd-only defect: `AcmeClient.fetchRaw` invoked the global `fetch` as an instance method, which throws `Illegal invocation`. It is fixed in `04f5a58` with a regression test; the offline suite could not catch it because every test injects a mock fetcher. Only **staging** ACME has been exercised live — production LE is never used by tests.
 
 ## Local development
 
@@ -19,6 +21,7 @@ Prerequisites: Node.js >= 22 (Wrangler 4 requires it) and npm.
 
 ```sh
 npm install
+cp wrangler.example.jsonc wrangler.jsonc   # working config; wrangler.jsonc is gitignored
 cp .dev.vars.example .dev.vars
 npm run build:web          # builds the admin SPA -> web/dist (required before wrangler dev / vitest)
 npm run types              # regenerate worker-configuration.d.ts after changing wrangler.jsonc
@@ -26,6 +29,10 @@ npm run db:migrate:local   # apply migrations to the local D1 database (.wrangle
 npm test                   # workerd-pool tests + the SPA DOM suite (happy-dom)
 npm run dev                # wrangler dev on http://localhost:8787
 ```
+
+`wrangler.jsonc` is gitignored; the tracked template is `wrangler.example.jsonc`. The
+working copy must exist for `npm test`, `npm run types`, and `wrangler dev`, since
+`vitest.config.ts` and Wrangler both read `./wrangler.jsonc`.
 
 Iterating on the SPA: run `npm run dev` in one terminal and `npm run dev -w web` in a
 second. The Vite dev server on http://localhost:5173 hot-reloads and proxies `/api` to
@@ -41,12 +48,13 @@ email as the actor.
 For local development behind `wrangler dev` (where no Access sits in front), set
 `DEV_ACCESS_EMAIL` in `.dev.vars`: requests from loopback hosts then skip JWT
 verification and use that email as the audit actor. The variable is empty in
-`wrangler.jsonc`, so deployed Workers never run the bypass — it is also
-unreachable on any non-loopback hostname.
+the config template (`wrangler.example.jsonc`), so deployed Workers never run
+the bypass — it is also unreachable on any non-loopback hostname.
 
-Deployment placeholders: `wrangler.jsonc` currently carries placeholder D1/R2 IDs.
-Replace them (`wrangler d1 create certworker`, `wrangler r2 bucket create
-certworker-artifacts`) before the first deploy.
+Deployment placeholders: the tracked template `wrangler.example.jsonc` carries
+placeholder D1/R2 IDs and Access values; `wrangler.jsonc` is a gitignored copy.
+Replace the placeholders (`wrangler d1 create certworker`, `wrangler r2 bucket
+create certworker-artifacts`) before the first deploy.
 
 ## M2 staging issuance
 
@@ -65,8 +73,9 @@ staging account and downloaded artifacts under `.wrangler/acme/` (gitignored). T
 local account and leaf private keys are plaintext development artifacts; do not copy
 them into production storage. Any non-staging directory requires `--allow-production`.
 
-The offline suite covers the ACME/Cloudflare DNS flows. The live staging run requires
-a real test zone and DNS token and has not yet been performed in this workspace.
+The offline suite covers the ACME/Cloudflare DNS flows. A live staging run against a
+real test zone and DNS token has been performed and passed (apex + wildcard; SANs and
+leaf-key match asserted, chain inspected, TXT records removed on success and failure).
 
 ## Renewals, sweeper, and revocation (M7)
 
@@ -82,7 +91,7 @@ curl 'http://localhost:8787/__scheduled?cron=17+3+*+*+*'
 
 ## Staging and production (M7)
 
-`wrangler.jsonc` carries an `env.production` block: production ACME directory (`https://acme-v02.api.letsencrypt.org/directory`), separate D1 (`certworker-prod`) and R2 bucket (`certworker-artifacts-prod`). Cron triggers and assets are inherited from the top level; deploy and configure it with:
+The config carries an `env.production` block: production ACME directory (`https://acme-v02.api.letsencrypt.org/directory`), separate D1 (`certworker-prod`) and R2 bucket (`certworker-artifacts-prod`). The top-level (staging) environment deploys the `certworker-staging` Worker; `env.production` overrides `name` to `certworker`. Cron triggers and assets are inherited from the top level; deploy and configure it with:
 
 ```sh
 npx wrangler d1 create certworker-prod

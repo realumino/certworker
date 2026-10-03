@@ -6,6 +6,7 @@ dist/
 
 # Wrangler
 .wrangler/
+wrangler.jsonc
 .dev.vars
 .dev.vars.*
 !.dev.vars.example

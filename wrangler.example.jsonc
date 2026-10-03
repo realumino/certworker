@@ -1,6 +1,11 @@
+// Template for this project's Wrangler config. `wrangler.jsonc` is gitignored;
+// copy this file and fill in the placeholders for your account:
+//   cp wrangler.example.jsonc wrangler.jsonc
+// The working copy must exist for `npm test`, `npm run types`, and `wrangler dev`,
+// since vitest.config.ts and Wrangler both read `./wrangler.jsonc`.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "certworker",
+  "name": "certworker-staging",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "assets": {
@@ -58,11 +63,13 @@
   "env": {
     // Production: production ACME directory, separate D1/R2. Bindings and vars
     // are non-inheritable and repeated here; `triggers` (cron) and `assets` are
-    // inherited from the top level. Deploy with `wrangler deploy --env production`.
+    // inherited from the top level. `name` overrides the derived
+    // `certworker-staging-production`. Deploy with `wrangler deploy --env production`.
     "production": {
+      "name": "certworker",
       // The two environments share the hostname; moving it is a cutover (the
       // previous Worker must release the route first).
-      "routes": [{ "pattern": "ssl.example.com", "custom_domain": true }],
+      "routes": [{ "pattern": "certworker.example.com", "custom_domain": true }],
       "vars": {
         "ACCESS_TEAM_DOMAIN": "https://<team>.cloudflareaccess.com",
         "ACCESS_AUD": "<aud>",

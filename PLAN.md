@@ -5,7 +5,7 @@ via the Cloudflare DNS API), stores them in R2, and distributes them to nodes th
 pull periodically using per-node API keys. Admin surface is protected by Cloudflare
 Access; there is no application-level user login.
 
-Status: **M0–M8 complete. M2 live staging acceptance and M8 live node onboarding are still pending. M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the `env.production` staging/prod split. M8 adds the reference node agent and onboarding runbook in `agent/`.**
+Status: **M0–M8 complete. M2 live staging issuance and M8 live node onboarding have both been performed and passed (LE staging; Linode node with systemd units, nginx reload, `304` no-op, revoked-key rejection). A workerd-only `fetch` defect found during the live run was fixed in `04f5a58`. M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the `env.production` staging/prod split. M8 adds the reference node agent and onboarding runbook in `agent/`. Only staging ACME has been exercised live.**
 
 ---
 
@@ -429,12 +429,13 @@ certworker/
 ├─ web/                      # Vite + React SPA → web/dist
 ├─ agent/                    # node agent script + systemd units + runbook
 ├─ test/                     # vitest + workerd pool and mocked ACME/DNS tests
-└─ wrangler.jsonc
+├─ wrangler.example.jsonc    # tracked config template
+└─ wrangler.jsonc            # local working copy (gitignored)
 ```
 
 ```jsonc
 {
-  "name": "certworker",
+  "name": "certworker-staging",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "assets": {
@@ -456,6 +457,7 @@ certworker/
   },
   "env": {
     "production": {
+      "name": "certworker",
       "vars": { "ACME_DIRECTORY": "https://acme-v02.api.letsencrypt.org/directory" },
       "d1_databases": [{ "binding": "DB", "database_name": "certworker-prod", "database_id": "<id>" }],
       "r2_buckets": [{ "binding": "CERTS", "bucket_name": "certworker-artifacts-prod" }]
@@ -463,6 +465,9 @@ certworker/
   }
 }
 ```
+
+The tracked template is `wrangler.example.jsonc`; `wrangler.jsonc` is a gitignored
+working copy required for `npm test`, `npm run types`, and `wrangler dev`.
 
 Secrets (`wrangler secret put`): `CF_DNS_API_TOKEN`, `ENVELOPE_KEY`.
 
@@ -478,8 +483,8 @@ Secrets (`wrangler secret put`): `CF_DNS_API_TOKEN`, `ENVELOPE_KEY`.
   mocked ACME/Cloudflare DNS protocol behavior.
 - M2 live acceptance is a manual run against LE **staging** on a dedicated test zone:
   issue a certificate, assert SANs and leaf-key match, inspect the chain and expiry,
-  and verify TXT cleanup. It requires a real DNS token and has not yet been run in
-  this workspace. Production LE is never used by automated tests.
+  and verify TXT cleanup. It requires a real DNS token and has been run successfully
+  in this workspace (apex + wildcard). Production LE is never used by automated tests.
 - Production LE is never used by automated tests. The M2 script blocks non-staging
   directories unless the operator explicitly passes `--allow-production`.
 
