@@ -1,446 +1,345 @@
-# certworker
+# CertWorker
 
-A single Cloudflare Worker that issues TLS certificates from Let's Encrypt (ACME v2,
-DNS-01 via the Cloudflare DNS API), stores them in R2, and serves them to nodes that
-pull periodically with per-node API keys.
+> **Warning — this project is still under heavy development.**
+> APIs, storage layout, and configuration may change without notice between
+> revisions. Pin a revision before deploying, read the diff on every update, and
+> do not treat the admin panel or the pull API as stable interfaces yet.
 
-It replaces the usual per-node certbot setup: certificates and private keys are
-generated **once, server-side**, and every authorized node pulls the **exact same
-certificate + key**. One Worker deployment covers issuance, renewal, storage,
-distribution, and an admin panel.
+## About this project
 
-- **Runtime:** one Worker, one hostname (e.g. `certworker.example.org`).
-- **Admin surface:** React SPA + `/api/*`, protected by Cloudflare Access (no app login).
-- **Node surface:** `GET /v1/*`, public path with bearer API keys, ETag/`304` support.
-- **Renewal:** daily cron creates Cloudflare Workflow instances for due domains.
-- **Plans:** runs on the Workers **Free** plan (Workflows is included; free allows
-  10 ms CPU per step, which the ECDSA P-256 keygen/CSR fits). Paid removes the free
-  daily limits and raises per-step CPU to 30 s.
+CertWorker is a centralized TLS certificate issuer and distributor that runs as a
+single Cloudflare Worker.
 
-Design details and the data model live in [PLAN.md](./PLAN.md). The node agent and its
-onboarding runbook live in [agent/](./agent/README.md).
+The problem it solves: Let's Encrypt rate limits (certificates per registered
+domain per week, duplicate certificates, failed validations) are applied per
+registered domain and per ACME account. When every machine provisions its own
+certificate, they all draw down the *same* budget, each machine needs DNS API
+credentials, private keys are generated and stored everywhere, and a broken
+provisioner burns the shared quota with failed validations. Adding a node makes
+the fleet more fragile, not less.
 
----
+CertWorker flips the model: certificates are issued **once**, server-side, and
+every node simply pulls the identical material:
 
-## What it does
+1. A table of domains drives issuance (leaf key + CSR generated on the server).
+2. Certificates are issued and renewed via Let's Encrypt (ACME v2, DNS-01
+   challenges published through the Cloudflare DNS API — works for wildcards,
+   no inbound HTTP required).
+3. Certificate, chain, and the private key (AES-256-GCM encrypted at rest) are
+   stored in R2; metadata lives in D1.
+4. Nodes fetch the **same** certificate and key through a pull API authenticated
+   with one API key per node (Bearer token, ETags, per-key rate limit).
+5. A daily cron renews certificates before expiry; nodes poll on their own
+   schedule. The server never notifies or pushes to nodes.
+6. An admin SPA (static assets in the same Worker) manages domains, issuance
+   runs, certificates, API keys, and pull history — protected by Cloudflare
+   Access, there is no application-level user login.
 
-```
- admin browser ──▶ certworker.example.org          Access app A: Allow (IdP/email)
-                    ├─ /*      → Static Assets (SPA)     (protected)
-                    └─ /api/*  → Admin API               JWT re-verified in Worker
+Non-goals: node push/notification, per-node unique keys, non-Cloudflare DNS
+providers, RSA keys (ECDSA P-256 only), and expiry notification emails.
 
- node agent ──────▶ certworker.example.org/v1/*     Access app B: Bypass (public)
- (systemd timer)        │                             Worker requires API key
-                        ▼
-                  CertificateWorkflow (durable steps, per run)
-                   create order → publish TXT → wait → validate
-                   → finalize → store → purge previous → cleanup
-```
+## Usage
 
-1. You add a domain row (apex, wildcard, or apex+wildcard) in the admin panel.
-2. The Workflow obtains an ECDSA P-256 certificate from Let's Encrypt using DNS-01
-   TXT records created through the Cloudflare DNS API, then stores the PEMs in R2 and
-   metadata in D1. The previous certificate is purged.
-3. You create an API key per node (shown once) and install the reference agent.
-4. The agent polls `GET /v1/domains/<name>/files/fullchain` on a systemd timer, skips
-   unchanged certificates with `If-None-Match`/`304`, validates with `openssl`,
-   installs the pair under `/etc/certworker/`, and runs an optional reload command
-   only when the pair changed.
-5. The daily cron (`17 3 * * *`, UTC) reissues certificates whose `not_after` falls
-   within their `renew_before_days` window (default 30). Nodes pick the new pair up on
-   their next poll.
+### Deploy to Cloudflare Workers
 
-## What you can expect
+**Prerequisites**
 
-**Admin panel** (behind Cloudflare Access) — routes under `/`:
+On your local machine:
 
-| View | What it gives you |
-|---|---|
-| Overview | counts, soonest expiry, failed runs, key last-use |
-| Domains | add/edit/pause domains, wildcard toggle, manual issue/reissue, delete (revokes first) |
-| Runs | per-domain workflow status and Let's Encrypt error payloads |
-| Certificates | history, metadata, download `fullchain` / `key` / `bundle`, revoke |
-| API Keys | create (plaintext shown **once**), rotate, revoke |
-| Pulls | which key pulled which domain, when, with what HTTP status |
-| Audit | every admin mutation with the Access email as actor |
+- Node.js ≥ 22 and npm (the repo uses npm workspaces for `web/`).
+- This repository checked out; `npm install` once.
+- Wrangler (installed as a dev dependency — use `npx wrangler`), authenticated
+  against your account (`npx wrangler login`, or `CLOUDFLARE_API_TOKEN` in the
+  environment).
 
-**Node pull API** (`/v1/*`) — GET only, `Authorization: Bearer cw_<id>.<secret>`:
+In the Cloudflare account:
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /v1/me` | key identity and allowed domains |
-| `GET /v1/domains` | visible domain list + current-cert metadata (cheap poll) |
-| `GET /v1/domains/:name/cert` | JSON manifest with all four PEMs (including the decrypted key) |
-| `GET /v1/domains/:name/files/:file` | raw `cert` / `chain` / `fullchain` / `key` |
+- Permission to create Workers, D1 databases, R2 buckets, and Workflows (an
+  "Edit Cloudflare Workers" token plus D1/R2 storage edit covers the CLI
+  commands below; otherwise create the resources in the dashboard).
+- One hostname on a zone in the account for the Worker's custom domain
+  (e.g. `certworker.example.org`).
+- A Cloudflare Access (Zero Trust) team to protect the admin surface.
 
-Responses carry `ETag: "<serial>-<fingerprint>"` and `Cache-Control: no-store`;
-sending the ETag back as `If-None-Match` returns `304` with no body and no decryption.
-Keys are rate limited to 60 requests / 60 s and stop working immediately on revoke.
+API tokens:
 
-**Scope and limitations**
+- `CF_DNS_API_TOKEN` — a **separate, least-privilege** token used by the Worker
+  to complete DNS-01 challenges. Scope: `Zone:DNS:Edit` + `Zone:Zone:Read` on
+  exactly the zones whose certificates you will issue.
+- `ENVELOPE_KEY` — 32 random bytes, base64 (`openssl rand -base64 32`). This is
+  the AES-256-GCM key that encrypts private keys at rest. Generate it per
+  environment, keep it out of version control, and never lose it (the stored
+  keys are unreadable without it).
 
-- TLS certificate distribution copies the private key to every authorized node
-  (required so nodes serve an identical cert). A leaked key exposes exactly its
-  scoped domains; keys are per-node, scoped, rate limited, revocable, and audited.
-- ECDSA P-256 leaf keys only; no RSA in this version.
-- DNS-01 only, and only the Cloudflare DNS API.
-- Identical cert + key on every node — no per-node unique keys.
-- No push/notification to nodes; nodes pull. No expiry emails (Let's Encrypt removed
-  them); the dashboard is the notification surface.
-- No application-level user login; Cloudflare Access is the only admin auth.
-- Only Let's Encrypt **staging** has been exercised end-to-end in this repo; production
-  ACME is an explicit opt-in and is never used by tests.
+**The config has two environments — know which one you are editing**
 
----
-
-## Credentials and API tokens
-
-Create these before deploying. Only the first is needed to run `wrangler`; the rest are
-what the running Worker uses. The examples below need `curl` and `jq`.
-
-| Credential | Created with | Used by | Stored as |
-|---|---|---|---|
-| Bootstrap API token (or `wrangler login`) | Cloudflare dashboard | Wrangler: D1, R2, deploy, secrets, routes, Access apps | shell env vars |
-| `CF_DNS_API_TOKEN` | Cloudflare dashboard | Worker + `npm run issue`: `_acme-challenge` TXT records | Worker secret |
-| `ENVELOPE_KEY` | `openssl rand` | Worker: AES-256-GCM for keys at rest | Worker secret |
-| Access apps A + B | Cloudflare Access API or dashboard | edge auth for the SPA and `/api` / `/v1` | nothing in the Worker |
-| Node API keys `cw_<id>.<secret>` | Admin panel or `POST /api/keys` | node agents | SHA-256 hash in D1 |
-
-Prerequisites you will need while creating the tokens: your **account ID**
-(`npx wrangler whoami` once authenticated, or the dashboard URL), the **zone ID** of the
-zone that holds your hostname, and (for app A) a configured **identity provider** in
-Zero Trust (the built-in One-time PIN works without extra setup).
-
-### 1. Bootstrap token for Wrangler
-
-`wrangler login` works, but its OAuth flow has no granular scopes. For least privilege
-use an **account-owned API token** and export it instead:
+Configuration lives in `wrangler.jsonc` (a gitignored working copy); the tracked
+template is `wrangler.example.jsonc`:
 
 ```sh
-export CLOUDFLARE_API_TOKEN="<token>"
-export CLOUDFLARE_ACCOUNT_ID="<account id>"
-npx wrangler whoami
+cp wrangler.example.jsonc wrangler.jsonc
 ```
 
-Create it at **Manage Account → API Tokens → Create Token → Custom token** (or **My
-Profile → API Tokens** for a user token). User tokens label permissions `Edit`;
-account-owned tokens label the same permissions `Write`.
+One file defines **two environments**:
 
-| Scope | Permission | Needed for |
-|---|---|---|
-| Account | Workers Scripts → Edit | deploy the Worker, set secrets |
-| Account | D1 → Edit | `wrangler d1 create`, `migrations apply` |
-| Account | Workers R2 Storage → Edit | `wrangler r2 bucket create` |
-| Zone (hostname's zone) | Workers Routes → Edit | attach the production custom domain |
-| Account | Access: Apps and Policies → Edit | create apps A/B from the terminal (skip if using the dashboard) |
-| Account | Account Settings → Read | optional; only needed if `CLOUDFLARE_ACCOUNT_ID` is unset |
+- **Top level = staging.** Worker `certworker-staging`, Let's Encrypt *staging*
+  directory (`acme-staging-v02`), separate staging D1/R2/workflow names. This is
+  what `npm run dev` and `npm run deploy` use.
+- **`env.production` = production.** Worker `certworker`, the *production* Let's
+  Encrypt directory, its own D1/R2 and workflow, and (in the template) the
+  custom-domain route. Deploy it explicitly with `wrangler deploy --env production`.
 
-Notes:
+Bindings and vars are **not inherited** across environments: whatever you change
+in the top level must be repeated under `env.production` (only `assets` and
+`triggers` carry over). Every command below states which environment it targets;
+double-check before running anything that writes to D1 or deploys.
 
-- The built-in **Edit Cloudflare Workers** template covers the first four; add Access
-  separately if you provision Access from the CLI.
-- The first `wrangler deploy` creates the two Workers. If your token is restricted to
-  existing Workers, create them once with a token that can create Workers (product-level
-  Workers Admin), then redeploy with the narrower token.
-- Binding a Worker to D1/R2 does not require permissions on those resources, but
-  *creating* the databases/buckets and applying migrations from the CLI does.
-- Only the production deploy touches routes; the staging Worker has no custom domain.
-- Scope the token to one account, and the routes permission to the hostname's zone.
+**0. Fill in `wrangler.jsonc`**
 
-### 2. `CF_DNS_API_TOKEN` — the Worker's DNS token
+Replace the placeholders in both blocks: the Worker/resource names if you
+deviate from the template, the D1 `database_id` (after step 1), R2 bucket names,
+workflow names, the rate-limit `namespace_id` (unique per environment), and the
+vars:
 
-This is the token the Worker itself uses to resolve a domain's zone and to publish and
-remove `_acme-challenge` TXT records. Keep it separate from the bootstrap token: it
-lives inside the Worker and is the one credential that could leak from there.
+- `ACCESS_TEAM_DOMAIN` — `https://<team>.cloudflareaccess.com` (see the Access
+  step).
+- `ACCESS_AUD` — the AUD tag of the admin Access application.
+- `ACME_DIRECTORY` — keep the staging directory until the whole flow is
+  verified; only switch to `https://acme-v02.api.letsencrypt.org/directory` in
+  the production environment.
+- `DEV_ACCESS_EMAIL` — must stay `""` in every deployed environment.
 
-- **Type:** Zone-scoped token.
-- **Permissions:** `Zone → Zone → Read` and `Zone → DNS → Edit`.
-- **Zone resources:** only the zones you issue for. A token scoped to `example.com`
-  cannot issue for `other.com`; adding a domain outside the scope fails with
-  `No Cloudflare zone found for …; check Zone:Zone:Read access and the token's zone scope`.
-
-Create at **My Profile → API Tokens → Create Token → Custom token**, add the two
-permissions, and select the zones under **Zone Resources**. The value is shown once.
-
-Verify it proves both permissions (paste at the prompt; do not pass it as an argument):
-
-```bash
-printf 'Paste CF_DNS_API_TOKEN: ' && read -rs CF_DNS_API_TOKEN && echo
-curl -sS -H "Authorization: Bearer $CF_DNS_API_TOKEN" \
-  'https://api.cloudflare.com/client/v4/zones?per_page=1' | jq '{success, errors}'
-```
-
-Set it per environment (see [Deploy to Cloudflare](#deploy-to-cloudflare)):
+**1. Create the D1 database and R2 bucket**
 
 ```sh
-npx wrangler secret put CF_DNS_API_TOKEN
-npx wrangler secret put CF_DNS_API_TOKEN --env production
-```
-
-The DNS-01 records are created with `ttl=60` and deleted after validation; nothing else
-in the zone is touched.
-
-### 3. `ENVELOPE_KEY`
-
-Not a Cloudflare credential. It is the AES-256-GCM key that encrypts the ACME account
-key and every leaf private key before they are written to R2.
-
-```sh
-openssl rand -base64 32
-```
-
-Set it as a Worker secret per environment, use a different value for staging and
-production, and **back it up**: without it the stored private keys cannot be decrypted,
-and re-issuing every certificate is the only recovery.
-
-```sh
-npx wrangler secret put ENVELOPE_KEY
-npx wrangler secret put ENVELOPE_KEY --env production
-```
-
-Envelope-key rotation is not implemented; changing the value invalidates existing R2 key
-material.
-
-### 4. Cloudflare Access apps A and B
-
-Two apps on the same hostname must exist before the Worker is usable. The Worker does not
-need a token for Access (it verifies the injected JWT against the public JWKS), but
-creating the apps needs `Access: Apps and Policies → Edit` on the bootstrap token.
-
-- **App A** — `certworker.example.org` (whole host), policy **Allow** for your IdP/email.
-  Protects the SPA and `/api/*`.
-- **App B** — `certworker.example.org/v1`, policy **Bypass** (or Service Auth for extra
-  hardening). The Worker still requires the node API key.
-
-From the terminal (replace `HOST`; app A's response also yields the `ACCESS_AUD`):
-
-```sh
-ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID"
-HOST=certworker.example.org
-API="https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/access/apps"
-BEARER="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
-JSON='Content-Type: application/json'
-
-# App A: admin (Allow)
-APP_A=$(curl -sS -X POST "$API" -H "$BEARER" -H "$JSON" \
-  --data "{\"name\":\"certworker admin\",\"domain\":\"$HOST\",\"type\":\"self_hosted\"}")
-APP_A_ID=$(jq -r '.result.id' <<<"$APP_A")
-AUD=$(jq -r '.result.aud' <<<"$APP_A")          # -> ACCESS_AUD
-
-curl -sS -X POST "$API/$APP_A_ID/policies" -H "$BEARER" -H "$JSON" \
-  --data '{"name":"allow","decision":"allow","include":[{"email":{"email":"you@example.com"}}]}'
-
-# App B: node pulls (Bypass)
-APP_B_ID=$(curl -sS -X POST "$API" -H "$BEARER" -H "$JSON" \
-  --data "{\"name\":\"certworker nodes\",\"domain\":\"$HOST/v1\",\"type\":\"self_hosted\"}" \
-  | jq -r '.result.id')
-
-curl -sS -X POST "$API/$APP_B_ID/policies" -H "$BEARER" -H "$JSON" \
-  --data '{"name":"bypass","decision":"bypass","include":[{"everyone":{}}]}'
-```
-
-`ACCESS_TEAM_DOMAIN` is your Zero Trust team domain (`https://<team>.cloudflareaccess.com`)
-and `ACCESS_AUD` is app A's `aud` above; put both in the `vars` block of `wrangler.jsonc`.
-Dashboard equivalent: **Zero Trust → Access → Applications → Add an application →
-Self-hosted** with the same domains and policies.
-
-### 5. Node API keys
-
-Not created in advance. Create one per node in the admin panel **API Keys → Create**, or
-`POST /api/keys` once the Worker is live. The `cw_<id>.<secret>` value is shown once;
-only SHA-256(secret) is stored. Revoke or rotate at any time — the change takes effect on
-the node's next pull.
-
----
-
-## Configuration
-
-The Worker binding/variable contract is defined in `wrangler.example.jsonc` (tracked
-template). Local development uses a gitignored copy at `wrangler.jsonc`.
-
-### Bindings (wrangler config)
-
-| Binding | Type | Purpose |
-|---|---|---|
-| `ASSETS` | Static Assets | admin SPA from `web/dist` |
-| `DB` | D1 | domains, certificates, runs, keys, pull events, audit |
-| `CERTS` | R2 | PEMs and the encrypted private keys |
-| `ISSUANCE` | Workflow | `CertificateWorkflow` (class in `src/issue/workflow.ts`) |
-| `PULL_LIMITER` | Rate limit | per-key pulls, `simple: { limit: 60, period: 60 }` |
-
-Cron trigger: `17 3 * * *` (daily renewal + sweeper).
-
-### Variables
-
-| Variable | Meaning |
-|---|---|
-| `ACCESS_TEAM_DOMAIN` | e.g. `https://<team>.cloudflareaccess.com`; JWKS is fetched from `<domain>/cdn-cgi/access/certs` |
-| `ACCESS_AUD` | Access application AUD tag for the admin app; verified together with `iss` |
-| `ACME_DIRECTORY` | `https://acme-staging-v02.api.letsencrypt.org/directory` (staging) or `https://acme-v02.api.letsencrypt.org/directory` (production) |
-| `DEV_ACCESS_EMAIL` | Local only. Empty in every deployed environment. When set, `/api/*` from loopback hosts skips JWT verification and uses this email as the audit actor |
-
-### Secrets
-
-Both secrets (`CF_DNS_API_TOKEN`, `ENVELOPE_KEY`) are Worker secrets and must be set per
-environment. [Credentials and API tokens](#credentials-and-api-tokens) covers how to
-create each, its permission boundaries, and the `wrangler secret put` commands.
-
-Copy `.dev.vars.example` to `.dev.vars` for local runs. `.dev.vars` and `wrangler.jsonc`
-are gitignored.
-
-### Cloudflare Access
-
-App A (`certworker.example.org`, policy Allow) protects the SPA and `/api/*`; app B
-(`certworker.example.org/v1`, policy Bypass) covers node pulls and leaves the API key as
-the Worker-side check. Create them with the API or dashboard commands in
-[Credentials and API tokens](#credentials-and-api-tokens).
-
-Set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` from app A. The Worker verifies the injected
-`Cf-Access-Jwt-Assertion` (RS256, `iss`, `aud`) on every admin request, so `/api/*` is
-never protected by network position alone.
-
-### Environments
-
-`wrangler.example.jsonc` defines a staging top-level config and an `env.production`
-block:
-
-| | staging (default) | production (`--env production`) |
-|---|---|---|
-| Worker name | `certworker-staging` | `certworker` |
-| ACME directory | LE staging | LE production |
-| D1 | `certworker-staging` | `certworker` |
-| R2 | `certworker-artifacts-staging` | `certworker-artifacts` |
-| Secrets | set separately | set separately (distinct `ENVELOPE_KEY`) |
-
-The top-level staging Worker has no custom-domain route, so it deploys to
-`certworker-staging.<subdomain>.workers.dev`. The `env.production` block carries the
-`routes` entry (`certworker.example.org` in the template) — replace it with your host.
-Because both environments share one hostname, moving it between them is a cutover:
-release the route from the previous Worker first.
-
----
-
-## Local development
-
-Prerequisites: Node.js >= 22 (Wrangler 4 requires it), npm.
-
-```sh
-npm install
-cp wrangler.example.jsonc wrangler.jsonc   # working config; gitignored
-cp .dev.vars.example .dev.vars             # add a dev DNS token + ENVELOPE_KEY
-npm run build:web                          # builds the admin SPA -> web/dist (needed first)
-npm run types                              # regenerate worker-configuration.d.ts after config changes
-npm run db:migrate:local                   # apply migrations to local D1 (.wrangler/state)
-npm test                                   # workerd tests + SPA DOM suite
-npm run dev                                # wrangler dev on http://localhost:8787
-```
-
-`web/dist`, `wrangler.jsonc`, and `.dev.vars` must exist before `npm test`,
-`npm run types`, and `npm run dev`; `vitest.config.ts` and Wrangler both read
-`./wrangler.jsonc`. The placeholder D1/R2 IDs in the template are fine locally.
-
-**Admin dev loop.** With `DEV_ACCESS_EMAIL` set in `.dev.vars` (the example sets
-`dev@example.com`), requests from `localhost`/`127.0.0.1`/`[::1]` skip Access JWT
-verification and audit as that address. For SPA hot reload, run `npm run dev` in one
-terminal and `npm run dev -w web` in another — Vite serves `http://localhost:5173` and
-proxies `/api` to `wrangler dev` on 8787.
-
-**Trigger the cron locally.** With `npx wrangler dev --test-scheduled`:
-
-```sh
-curl 'http://localhost:8787/__scheduled?cron=17+3+*+*+*'
-```
-
-**Issue a real staging certificate from the CLI** (bypasses the Worker; uses the ACME
-client directly and needs `CF_DNS_API_TOKEN`):
-
-```sh
-npm run issue -- example.com                  # apex + wildcard by default
-npm run issue -- '*.example.com'              # wildcard only
-npm run issue -- example.com --no-wildcard    # apex only
-```
-
-It defaults to LE staging, waits for DNS-01 propagation, deletes its TXT records, and
-writes artifacts to `.wrangler/acme/`. Any non-staging directory requires
-`--allow-production`.
-
-Tests run in two suites: `vitest run` (worker, `@cloudflare/vitest-pool-workers`,
-mocked ACME/DNS, migrations applied in setup) and `npm run test -w web` (SPA, happy-dom
-+ Testing Library). `npm test` runs both after building the SPA. `npm run check` runs
-all four TypeScript projects (worker, tests, scripts, web).
-
----
-
-## Deploy to Cloudflare
-
-### 1. Create resources and fill in the config
-
-```sh
+# staging (top-level environment)
 npx wrangler d1 create certworker-staging
 npx wrangler r2 bucket create certworker-artifacts-staging
-# for production:
+
+# production (env.production)
 npx wrangler d1 create certworker
 npx wrangler r2 bucket create certworker-artifacts
 ```
 
-Copy the printed D1 IDs into `wrangler.jsonc` (top level and under `env.production`),
-set the R2 bucket names, `ACME_DIRECTORY`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, and the
-production `routes` pattern. Then `npm run types`.
+Paste the printed `database_id` into the matching `d1_databases` entry. R2
+buckets are referenced by name only.
 
-### 2. Apply migrations and set secrets
+**2. Set the Worker secrets**
 
-Create `CF_DNS_API_TOKEN` and `ENVELOPE_KEY` first, then apply them per environment (see
-[Credentials and API tokens](#credentials-and-api-tokens)):
+Secrets are per deployed Worker, so production needs its own:
 
 ```sh
-npx wrangler d1 migrations apply DB --remote
 npx wrangler secret put CF_DNS_API_TOKEN
 npx wrangler secret put ENVELOPE_KEY
 
-# production:
-npx wrangler d1 migrations apply DB --env production --remote
 npx wrangler secret put CF_DNS_API_TOKEN --env production
-npx wrangler secret put ENVELOPE_KEY --env production   # distinct from staging
+npx wrangler secret put ENVELOPE_KEY --env production
 ```
 
-### 3. Create Access applications
-
-Create app A (Allow) and app B (Bypass), then put app A's `ACCESS_TEAM_DOMAIN` and
-`ACCESS_AUD` in the `vars` block. API and dashboard instructions are in
-[Credentials and API tokens](#credentials-and-api-tokens).
-
-### 4. Deploy
+**3. Apply the D1 migration**
 
 ```sh
-npm run deploy                    # staging: build SPA + wrangler deploy
-npx wrangler deploy --env production   # production
+npx wrangler d1 migrations apply DB --remote
+npx wrangler d1 migrations apply DB --remote --env production
 ```
 
-After the first production deploy, open the admin panel, add a domain, run **Issue**,
-then create an API key and onboard the node with [agent/README.md](./agent/README.md).
+(Local development uses `npm run db:migrate:local` instead.)
 
-### 5. Onboard a node
+**4. Deploy**
 
-See [agent/README.md](./agent/README.md) for the full runbook. Short version: install
-`agent/certworker-pull` and the systemd units, put the `cw_<id>.<secret>` token in
-`/etc/certworker/token` (mode `600`), set `CERTWORKER_API`/`ExecStart` (and
-`CERTWORKER_RELOAD_CMD` if something must reload) in the service unit, run the
-service once to install the PEMs under `/etc/certworker/`, then
-`systemctl enable --now certworker-pull.timer` (polls every 15 min ±5 min).
+```sh
+npm run deploy                              # staging (top level)
+npm run build:web && npx wrangler deploy --env production
+```
 
----
+`npm run deploy` builds the SPA into `web/dist` first; `web/dist` must exist
+before `wrangler dev` or `vitest run` as well. After the first deploy, open
+`https://<your-hostname>/` and confirm the admin SPA loads (it will prompt for
+Access login in the next step).
 
-## Operations
+#### Protect with Access
 
-- **Renewals** are automatic and server-side; nodes only pull. Reissue manually from
-  the admin panel (**Domains → Issue**) at any time.
-- **Revocation:** revoking a certificate or deleting a domain revokes it via ACME and
-  purges the stored PEMs. Revocation is idempotent; an already-purged certificate can no
-  longer be revoked (409).
-- **Sweeper:** the daily invocation also purges R2 prefixes of non-current certificates
-  and deletes stale `_acme-challenge` TXT records (>24 h). All steps are best-effort and
-  logged (`cron.complete`, `sweeper.*`).
-- **Logs:** `npx wrangler tail` for worker logs. Admin failures log structured
-  `admin.request_failed`; cron logs `cron.complete` / `cron.failed`.
-- **Key rotation:** rotate a key in the admin **Keys** view and install the new token
-  on the node; the old key stops working immediately.
+The Worker serves one hostname with **two path-scoped Access applications**:
+
+| Access app | Path | Policy | Serves |
+|---|---|---|---|
+| A | `certworker.example.org` (most specific match on `/api/*` too) | **Allow** — your IdP group or specific emails | Admin SPA + `/api/*` |
+| B | `certworker.example.org/v1` | **Bypass** (or Service Auth) | Node pull API |
+
+Access evaluates the most specific path first, so `/v1/*` hits app B and never
+redirects a node to a login page, while everything else is gated by app A.
+
+Setup:
+
+1. Create app A on your hostname with an Allow policy for your team/IdP (or
+   individual emails). Copy its **AUD tag**.
+2. Create app B with the path `certworker.example.org/v1` and a **Bypass**
+   policy. (Do not reuse app A's allow policy here; nodes have no browser.)
+3. Put the team domain and app A's AUD tag into the `vars` of **both**
+   environments: `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`, then redeploy.
+
+The layering is deliberately defense-in-depth: the Worker **re-verifies** the
+`Cf-Access-Jwt-Assertion` header on every `/api/*` request against the team JWKS
+(`iss` + `aud`), so even if app A is misconfigured, the admin API rejects
+unauthenticated requests. Conversely, if app B is deleted or mis-scoped, node
+pulls fail loudly (an HTML login page or 403 — see the troubleshooting table in
+[`agent/README.md`](agent/README.md)) while the admin surface keeps working.
+Access does not log bypassed traffic; the `pull_events` table is the pull log.
+
+Optional hardening (no code change): give app B a **Service Auth** policy
+instead of Bypass, so nodes additionally send `CF-Access-Client-Id` /
+`CF-Access-Client-Secret` headers.
+
+### Run on local wrangler
+
+Local dev runs the same Worker under `wrangler dev`, with placeholders in
+`wrangler.jsonc` and a local D1/R2 (Miniflare):
+
+```sh
+npm install
+cp wrangler.example.jsonc wrangler.jsonc   # placeholder IDs are fine locally
+npm run db:migrate:local
+cp .dev.vars.example .dev.vars             # then edit it
+npm run dev                                # serves http://localhost:8787
+```
+
+- `.dev.vars` holds the two secrets for local runs (`CF_DNS_API_TOKEN`,
+  `ENVELOPE_KEY`). **Real issuance touches Let's Encrypt staging and your real
+  Cloudflare DNS zone** — use a throwaway zone/subdomain.
+- `DEV_ACCESS_EMAIL` in `.dev.vars` is the local-only Access bypass: when set,
+  `/api/*` requests from loopback hosts skip Access JWT verification and that
+  email is recorded as the audit actor. It must be empty in deployed
+  environments (the deployed Worker refuses the bypass for non-loopback hosts).
+- The `ACME_DIRECTORY` var applies as configured — locally that is always the
+  staging directory.
+
+Useful commands (same as CI):
+
+```sh
+npm run check        # typecheck worker, tests, scripts, and web
+npm test             # worker tests (workerd pool) + web tests
+npm run issue -- example.com   # LE-staging acceptance script (scripts/issue.ts)
+```
+
+The `issue` script issues a certificate end-to-end outside the Worker and writes
+PEMs to `.wrangler/acme/out`; it refuses any non-staging ACME directory unless
+you pass `--allow-production`.
+
+## API Endpoints
+
+Both APIs live on the same hostname and are dispatched by path in
+`src/index.ts`. Errors are JSON: `{"error": "<code>", "message": "<text>"}`.
+
+### Admin API — `/api/*`
+
+Auth: Cloudflare Access JWT (`Cf-Access-Jwt-Assertion`), re-verified in the
+Worker. Mutations additionally require same-origin (`Origin` /
+`Sec-Fetch-Site`) and `Content-Type: application/json`; no CORS headers are
+ever emitted. List endpoints accept `?limit=` (1–200, default 50) and
+`?offset=`.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /api/overview` | counts, soonest expiry, failed runs, key last-use |
+| `GET /api/zones` | Cloudflare zones reachable with the DNS token (for the picker) |
+| `GET /api/domains` · `POST /api/domains` | list / create domain rows (zone, wildcard toggle, key type, renewal window) |
+| `GET /api/domains/:id` · `PATCH /api/domains/:id` · `DELETE /api/domains/:id` | detail / update / delete (delete revokes + purges, then soft-deletes) |
+| `POST /api/domains/:id/issue` | manual issue / reissue |
+| `GET /api/certificates` · `GET /api/certificates/:id` | certificate history and metadata |
+| `GET /api/certificates/:id/download?file=cert\|chain\|fullchain\|key\|bundle` | bootstrap download (`bundle` = fullchain + key) |
+| `POST /api/certificates/:id/revoke` | ACME revoke + purge artifacts (idempotent) |
+| `GET /api/runs` · `GET /api/runs/:id` | issuance runs: status, phase, timings, Let's Encrypt error detail |
+| `GET /api/keys` · `POST /api/keys` | list / create node API keys (plaintext shown **once**) |
+| `POST /api/keys/:id/revoke` | immediate revocation |
+| `POST /api/keys/:id/rotate` | replacement key (same label) + revoke the old one |
+| `GET /api/pulls` | pull log (key, domain, status, IP) |
+| `GET /api/audit` | admin mutations (actor, action, target) |
+
+### Node pull API — `/v1/*`
+
+Auth: `Authorization: Bearer cw_<id>.<secret>`. GET only. Per-key rate limit
+(60 requests/minute). Every response carries `ETag` (`"<serial>-<fingerprint>"`)
+and `Cache-Control: no-store`; sending `If-None-Match` returns `304` without
+touching R2 or decrypting anything. Successful pulls are recorded in
+`pull_events` and bump the key's `last_used_at`.
+
+| Method + path | Purpose |
+|---|---|
+| `GET /v1/me` | key id, label, scoped domains |
+| `GET /v1/domains` | domains this key may pull + current certificate metadata (cheap poll) |
+| `GET /v1/domains/:name/cert` | JSON manifest: SANs, serial, validity, ETag, and all PEMs (`cert_pem`, `chain_pem`, `fullchain_pem`, `private_key_pem`) |
+| `GET /v1/domains/:name/files/:file` | raw file: `cert`, `chain`, `fullchain`, or `key` — for curl-based agents, no JSON parsing |
+
+`:name` is the exact domain row name (`example.com`, or `*.example.com` for a
+wildcard-only row). Common errors: `401` bad/revoked key, `403 forbidden_domain`
+(key not scoped to that name), `404 not_found` (unknown domain) or
+`404 certificate_missing` (nothing issued yet), `429 rate_limited`.
+
+## Concepts
+
+**Domain row.** The unit of issuance. Stores the lowercase punycode name, the
+Cloudflare zone, `include_wildcard` (default on), `key_type`
+(`ecdsa_p256`), `renew_before_days` (default 30), and status
+(`active | paused | deleted`). The SAN set is derived from the row:
+
+| Row | Wildcard toggle | SANs issued |
+|---|---|---|
+| `example.com` | on | `example.com`, `*.example.com` (one order, two DNS-01 authorizations) |
+| `example.com` | off | `example.com` |
+| `*.example.com` | n/a | `*.example.com` only |
+
+**Certificate.** At most one `current` certificate per domain (D1 unique
+index). Artifacts live in R2 under `certs/<domain>/<cert-id>/`: `cert.pem`,
+`chain.pem`, `fullchain.pem`, `privkey.pem.enc`, `meta.json`. The private key is
+AES-256-GCM encrypted with `ENVELOPE_KEY` (AAD = path) and is decrypted only
+inside the pull path — never presigned, never logged. R2 is written before the
+D1 `current` pointer flips, so a crash can never leave a current certificate
+whose PEMs do not exist. Superseded artifacts are deleted immediately (the D1
+row survives for audit); a daily sweeper finishes anything a crash left behind.
+
+**Issuance run.** One Cloudflare Workflows instance
+(`CertificateWorkflow`) per issuance: create order → publish `_acme-challenge`
+TXT record(s) → wait for DNS propagation (DoH, two resolvers + settle) → accept
+challenges → await authorizations → generate key + CSR → finalize, download,
+store, flip `current` → purge the previous certificate → clean up TXT records.
+One run at a time per domain. Triggered by the daily cron (renewal window:
+`not_after − renew_before_days`; instance IDs like `renew-<domainId>-<date>`
+make cron idempotent) or manually from the admin panel. Let's Encrypt error
+payloads are stored verbatim on the run row.
+
+**ACME account.** One Let's Encrypt account per environment, stored in R2 under
+`acme/<env>/` (account key encrypted the same way as leaf keys). Leaf keys are
+generated per certificate; the account key is long-lived.
+
+**API key (one key = one node).** Token format `cw_<id>.<secret>`; only
+SHA-256 of the secret is stored, the plaintext is shown once. Lookup by embedded
+id with constant-time hash comparison; revocation takes effect immediately.
+Optional per-key domain scoping exists in the schema (`allowed_domains_json`,
+NULL = all domains). A leaked key exposes exactly its scoped domains' material —
+inherent to identical distribution — so scope narrowly, rotate per node, and
+watch `last_used_at` / the pull log.
+
+**Pull model.** Nodes poll; the server never notifies. The ETag changes exactly
+when the certificate changes (serial + fingerprint), so a poll that returns
+`304` costs nothing and never triggers a reload. A renewal that flips while a
+pull is in flight may 404 briefly; the next poll heals it.
+
+**Audit.** Every admin mutation (actor = Access email) and every pull (key, IP,
+status) is recorded in D1. Access is the only login; there is no application
+user table.
+
+**Environments.** Staging and production differ by ACME directory and by their
+D1/R2/workflow resources; certificates carry an `env` column. Local dev and all
+automated tests use the staging directory — production Let's Encrypt is an
+explicit opt-in.
+
+## Implement on nodes.
+
+Nodes run a small pull agent: fetch the raw files from `/v1/domains/<name>/files/...`
+(no JSON), validate with `openssl`, install into an app-owned directory, and
+optionally reload the web server — under a systemd timer.
+
+The reference implementation (a shell script plus a systemd service and timer)
+and the complete onboarding runbook — key creation, install paths, unit
+configuration, first pull, web-server wiring, operations, and troubleshooting —
+are in [`agent/README.md`](agent/README.md).
