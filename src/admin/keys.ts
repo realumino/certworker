@@ -59,7 +59,7 @@ export async function updateKeyHandler(
   if (!current) return errorResponse(404, "not_found", "API key not found");
 
   if (!("allowed_domains" in body)) {
-    return errorResponse(400, "invalid_request", "allowed_domains is required (null for all domains)");
+    return errorResponse(400, "invalid_request", "allowed_domains is required (null for all domains, [] for none)");
   }
   const scope = await validateAllowedDomains(deps, body.allowed_domains);
   if (scope instanceof Response) return scope;
@@ -121,9 +121,10 @@ function scopeFromRow(row: ApiKeyRow): string[] | null {
 }
 
 /**
- * Validate the `allowed_domains` request field. `null` = all domains; otherwise
- * a non-empty array of names that must each normalize and resolve to a
- * non-deleted domain row. Returned names are unique and sorted.
+ * Validate the `allowed_domains` request field. `null` = all domains; `[]` =
+ * no domains (deny every pull); otherwise a list of names that must each
+ * normalize and resolve to a non-deleted domain row. Returned names are unique
+ * and sorted.
  */
 async function validateAllowedDomains(
   deps: AdminDependencies,
@@ -132,9 +133,6 @@ async function validateAllowedDomains(
   if (value === null) return null;
   if (!Array.isArray(value)) {
     return errorResponse(400, "invalid_request", "allowed_domains must be null (all domains) or an array of domain names");
-  }
-  if (value.length === 0) {
-    return errorResponse(400, "invalid_request", "allowed_domains must be null (all domains) or a non-empty array");
   }
 
   const names: string[] = [];

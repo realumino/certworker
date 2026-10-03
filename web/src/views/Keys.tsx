@@ -5,6 +5,13 @@ import { EmptyRow, ErrorBanner, Modal, Page, Pager, StatusBadge } from "../compo
 import { formatDateTime, truncate } from "../format";
 import { useAsync, usePaged } from "../hooks";
 
+export type ScopeMode = "all" | "selected" | "none";
+
+/** Map a picker mode to the API value `allowed_domains` should take. */
+export function scopeValue(mode: ScopeMode, selected: string[]): string[] | null {
+  return mode === "all" ? null : mode === "none" ? [] : selected;
+}
+
 export function KeysView() {
   const list = usePaged<ApiKey>((offset, limit) => `/api/keys?offset=${offset}&limit=${limit}`, []);
   // Picker source for scope editing; the admin install scale makes one page enough.
@@ -118,22 +125,22 @@ export function KeysView() {
 }
 
 /**
- * Shared scope picker: "All domains" (`null` on the API) or an explicit
- * allowlist of registered domain row names. Exact names only — `example.com`
- * and `*.example.com` are separate rows.
+ * Shared scope picker: one of "All domains" (`null` on the API), "No domains"
+ * (`[]` — deny every pull), or an explicit allowlist of registered domain row
+ * names. Exact names only — `example.com` and `*.example.com` are separate rows.
  */
 function ScopeEditor({
   domains,
-  allDomains,
+  mode,
   selected,
-  onAllDomains,
+  onMode,
   onToggle,
   idPrefix,
 }: {
   domains: Domain[];
-  allDomains: boolean;
+  mode: ScopeMode;
   selected: string[];
-  onAllDomains: (all: boolean) => void;
+  onMode: (mode: ScopeMode) => void;
   onToggle: (name: string, checked: boolean) => void;
   idPrefix: string;
 }) {
@@ -141,14 +148,35 @@ function ScopeEditor({
     <>
       <div className="field inline">
         <input
-          id={`${idPrefix}-all-domains`}
-          type="checkbox"
-          checked={allDomains}
-          onChange={(event) => onAllDomains(event.target.checked)}
+          id={`${idPrefix}-scope-all`}
+          type="radio"
+          name={`${idPrefix}-scope`}
+          checked={mode === "all"}
+          onChange={() => onMode("all")}
         />
-        <label htmlFor={`${idPrefix}-all-domains`}>All domains</label>
+        <label htmlFor={`${idPrefix}-scope-all`}>All domains</label>
       </div>
-      <fieldset disabled={allDomains}>
+      <div className="field inline">
+        <input
+          id={`${idPrefix}-scope-selected`}
+          type="radio"
+          name={`${idPrefix}-scope`}
+          checked={mode === "selected"}
+          onChange={() => onMode("selected")}
+        />
+        <label htmlFor={`${idPrefix}-scope-selected`}>Selected domains</label>
+      </div>
+      <div className="field inline">
+        <input
+          id={`${idPrefix}-scope-none`}
+          type="radio"
+          name={`${idPrefix}-scope`}
+          checked={mode === "none"}
+          onChange={() => onMode("none")}
+        />
+        <label htmlFor={`${idPrefix}-scope-none`}>No domains (deny all pulls)</label>
+      </div>
+      <fieldset disabled={mode !== "selected"}>
         <legend>Allowed domains</legend>
         {domains.length === 0 ? <p className="muted">No domains registered yet.</p> : null}
         {domains.map((domain) => (
@@ -177,7 +205,7 @@ function CreateKeyForm({
   onError: (error: ApiError) => void;
 }) {
   const [label, setLabel] = useState("");
-  const [allDomains, setAllDomains] = useState(true);
+  const [mode, setMode] = useState<ScopeMode>("all");
   const [selected, setSelected] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
@@ -191,11 +219,11 @@ function CreateKeyForm({
     try {
       const created = await apiFetch<CreatedApiKey>("/api/keys", {
         method: "POST",
-        body: { label: label.trim(), allowed_domains: allDomains ? null : selected },
+        body: { label: label.trim(), allowed_domains: scopeValue(mode, selected) },
       });
       onCreated(created);
       setLabel("");
-      setAllDomains(true);
+      setMode("all");
       setSelected([]);
     } catch (cause) {
       onError(asApiError(cause));
@@ -222,7 +250,7 @@ function CreateKeyForm({
             />
           </div>
           <div className="field inline">
-            <button type="submit" disabled={submitting || label.trim().length === 0 || (!allDomains && selected.length === 0)}>
+            <button type="submit" disabled={submitting || label.trim().length === 0 || (mode === "selected" && selected.length === 0)}>
               {submitting ? "Creating…" : "Create key"}
             </button>
           </div>
@@ -230,9 +258,9 @@ function CreateKeyForm({
         <ScopeEditor
           idPrefix="key"
           domains={domains}
-          allDomains={allDomains}
+          mode={mode}
           selected={selected}
-          onAllDomains={setAllDomains}
+          onMode={setMode}
           onToggle={toggle}
         />
       </fieldset>
@@ -253,7 +281,11 @@ function EditScopeDialog({
   onSaved: () => void;
   onError: (error: ApiError) => void;
 }) {
-  const [allDomains, setAllDomains] = useState(apiKey.allowed_domains === null);
+  const initialMode: ScopeMode =
+    apiKey.allowed_domains === null ? "all"
+    : apiKey.allowed_domains.length === 0 ? "none"
+    : "selected";
+  const [mode, setMode] = useState<ScopeMode>(initialMode);
   const [selected, setSelected] = useState<string[]>(apiKey.allowed_domains ?? []);
   const [submitting, setSubmitting] = useState(false);
 
@@ -267,7 +299,7 @@ function EditScopeDialog({
     try {
       await apiFetch(`/api/keys/${apiKey.id}`, {
         method: "PATCH",
-        body: { allowed_domains: allDomains ? null : selected },
+        body: { allowed_domains: scopeValue(mode, selected) },
       });
       onSaved();
     } catch (cause) {
@@ -282,14 +314,14 @@ function EditScopeDialog({
         <ScopeEditor
           idPrefix="edit-key"
           domains={domains}
-          allDomains={allDomains}
+          mode={mode}
           selected={selected}
-          onAllDomains={setAllDomains}
+          onMode={setMode}
           onToggle={toggle}
         />
-        <p className="muted">A node can pull certificates only for the listed names; everything else answers 403.</p>
+        <p className="muted">A node can pull certificates only for the listed names; everything else answers 403. "No domains" denies every pull.</p>
         <div className="row-actions">
-          <button type="submit" disabled={submitting || (!allDomains && selected.length === 0)}>
+          <button type="submit" disabled={submitting || (mode === "selected" && selected.length === 0)}>
             {submitting ? "Saving…" : "Save"}
           </button>
           <button type="button" className="secondary" onClick={onClose}>

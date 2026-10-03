@@ -250,7 +250,7 @@ ever emitted. List endpoints accept `?limit=` (1–200, default 50) and
 | `POST /api/certificates/:id/revoke` | ACME revoke + purge artifacts (idempotent) |
 | `GET /api/runs` · `GET /api/runs/:id` | issuance runs: status, phase, timings, Let's Encrypt error detail |
 | `GET /api/keys` · `POST /api/keys` | list / create node API keys (plaintext shown **once**; optional `allowed_domains` scope) |
-| `PATCH /api/keys/:id` | replace a key's domain scope (`allowed_domains`; `null` = all domains) |
+| `PATCH /api/keys/:id` | replace a key's domain scope (`allowed_domains`; `null` = all domains, `[]` = no domains) |
 | `POST /api/keys/:id/revoke` | immediate revocation |
 | `POST /api/keys/:id/rotate` | replacement key (same label) + revoke the old one |
 | `GET /api/pulls` | pull log (key, domain, status, IP) |
@@ -316,10 +316,11 @@ generated per certificate; the account key is long-lived.
 SHA-256 of the secret is stored, the plaintext is shown once. Lookup by embedded
 id with constant-time hash comparison; revocation takes effect immediately.
 Each key carries a domain scope (`allowed_domains`): `null` (the default) lets
-it pull every registered domain, while an explicit list restricts it to those
-exact domain row names (`example.com` and `*.example.com` are separate entries;
-only registered, non-deleted rows are accepted). Set the scope at creation or
-via `PATCH /api/keys/:id`; rotating a key carries its scope over. A leaked key
+it pull every registered domain, `[]` denies all pulls, while an explicit list
+restricts it to those exact domain row names (`example.com` and `*.example.com`
+are separate entries; only registered, non-deleted rows are accepted). Set the
+scope at creation or via `PATCH /api/keys/:id`; rotating a key carries its
+scope over. A leaked key
 exposes exactly its scoped domains' material — inherent to identical
 distribution — so scope narrowly, rotate per node, and watch `last_used_at` /
 the pull log.

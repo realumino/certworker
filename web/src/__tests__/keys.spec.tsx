@@ -96,7 +96,7 @@ describe("api keys view", () => {
     expect(create?.body).toEqual({ label: "web-01", allowed_domains: null });
   });
 
-  it("posts an explicit scope when 'All domains' is unchecked", async () => {
+  it("posts an explicit scope when 'Selected domains' is chosen", async () => {
     const stub = installFetchStub({
       ...baseStubs(),
       "POST /api/keys": () => json(CREATED, 201),
@@ -104,13 +104,29 @@ describe("api keys view", () => {
     render(<KeysView />);
 
     fireEvent.change(await screen.findByLabelText("Label (node name)"), { target: { value: "web-01" } });
-    fireEvent.click(screen.getByLabelText("All domains"));
+    fireEvent.click(screen.getByLabelText("Selected domains"));
     fireEvent.click(screen.getByLabelText("example.com"));
     fireEvent.click(screen.getByRole("button", { name: "Create key" }));
 
     await screen.findByLabelText("Token for web-01");
     const create = stub.requests.find((request) => request.method === "POST" && request.path === "/api/keys");
     expect(create?.body).toEqual({ label: "web-01", allowed_domains: ["example.com"] });
+  });
+
+  it("posts a deny-all scope when 'No domains' is chosen", async () => {
+    const stub = installFetchStub({
+      ...baseStubs(),
+      "POST /api/keys": () => json(CREATED, 201),
+    });
+    render(<KeysView />);
+
+    fireEvent.change(await screen.findByLabelText("Label (node name)"), { target: { value: "web-01" } });
+    fireEvent.click(screen.getByLabelText("No domains (deny all pulls)"));
+    fireEvent.click(screen.getByRole("button", { name: "Create key" }));
+
+    await screen.findByLabelText("Token for web-01");
+    const create = stub.requests.find((request) => request.method === "POST" && request.path === "/api/keys");
+    expect(create?.body).toEqual({ label: "web-01", allowed_domains: [] });
   });
 
   it("renders the scope column", async () => {
@@ -136,8 +152,8 @@ describe("api keys view", () => {
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain("web-01");
 
-    // The create form has a same-named checkbox; query within the dialog.
-    fireEvent.click(within(dialog).getByLabelText("All domains"));
+    // The create form has a same-named control; query within the dialog.
+    fireEvent.click(within(dialog).getByLabelText("Selected domains"));
     fireEvent.click(within(dialog).getByLabelText("example.com"));
     fireEvent.click(within(dialog).getByLabelText("other.example.net"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
@@ -151,6 +167,28 @@ describe("api keys view", () => {
       expect(stub.requests.filter((request) => request.method === "GET" && request.path.startsWith("/api/keys")).length)
         .toBeGreaterThan(1);
     });
+  });
+
+  it("edits a key to deny-all by choosing No domains", async () => {
+    const stub = installFetchStub({
+      "GET /api/domains": () => json(DOMAINS),
+      "GET /api/keys": () => json([SCOPED_KEY]),
+      "PATCH /api/keys/k2": () => json({ key: { ...SCOPED_KEY, allowed_domains: [] } }),
+    });
+    render(<KeysView />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit scope" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("web-02");
+
+    fireEvent.click(within(dialog).getByLabelText("No domains (deny all pulls)"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(stub.requests.some((request) => request.method === "PATCH" && request.path === "/api/keys/k2")).toBe(true);
+    });
+    const patch = stub.requests.find((request) => request.method === "PATCH");
+    expect(patch?.body).toEqual({ allowed_domains: [] });
   });
 
   it("shows the replacement token after rotate and revokes only on confirm", async () => {

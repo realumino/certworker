@@ -49,7 +49,7 @@ export function ifNoneMatch(request: Request, etag: string): boolean {
   });
 }
 
-/** Parsed fail-closed: NULL ⇒ all domains, unparseable/non-string array ⇒ none. */
+/** Parsed fail-closed: NULL ⇒ all domains, `[]` or unparseable/non-string array ⇒ none. */
 export function allowedDomains(key: ApiKeyIdentity["key"]): Set<string> | null {
   if (key.allowed_domains_json === null) return null;
   try {

@@ -76,6 +76,20 @@ describe("admin API keys — create", () => {
     });
   });
 
+  it("stores a deny-all scope as an empty array", async () => {
+    const response = await createKeyHandler(makeDeps(), jsonRequest({ label: "node-1", allowed_domains: [] }));
+    expect(response.status).toBe(201);
+    const body = await readJson<{ token: string; key: Record<string, unknown> }>(response);
+    const [id] = body.token.replace(/^cw_/, "").split(".");
+    expect(body.key).toMatchObject({ id, label: "node-1", allowed_domains: [] });
+
+    expect(await getApiKey(env.DB, id)).toMatchObject({ allowed_domains_json: JSON.stringify([]) });
+    const audits = (await listAuditLog(env.DB, { limit: 50, offset: 0 })).filter((row) => row.target === id);
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ actor: "admin@example.com", action: "key.create", target: id });
+    expect(JSON.parse(audits[0].meta_json ?? "{}")).toEqual({ label: "node-1", allowed_domains: [] });
+  });
+
   it("rejects invalid, unknown, and deleted scope entries", async () => {
     const deps = makeDeps();
     await seedDomain(env.DB, { name: "reject.example.com" });
@@ -84,9 +98,9 @@ describe("admin API keys — create", () => {
     await seedDomain(env.DB, { name: "gone.reject.example.com", status: "deleted" });
 
     const cases: unknown[] = [
-      { label: "k", allowed_domains: [] },
       { label: "k", allowed_domains: "reject.example.com" },
       { label: "k", allowed_domains: [123] },
+      { label: "k", allowed_domains: [""] },
       { label: "k", allowed_domains: ["bad_name!"] },
       { label: "k", allowed_domains: ["unknown.example.com"] },
       { label: "k", allowed_domains: ["gone.reject.example.com"] },
@@ -151,6 +165,35 @@ describe("admin API keys — update scope", () => {
     expect(audits.map(({ action }) => action)).toEqual(["key.update", "key.update"]);
     expect(JSON.parse(audits[0].meta_json ?? "{}")).toEqual({ allowed_domains: ["scope.example.com"] });
     expect(JSON.parse(audits[1].meta_json ?? "{}")).toEqual({ allowed_domains: null });
+  });
+
+  it("denies all domains by patching an empty array", async () => {
+    const deps = makeDeps();
+    await seedDomain(env.DB, { name: "none.example.com" });
+    const seeded = await seedApiKey(env.DB, { label: "node-1", allowedDomains: ["none.example.com"] });
+
+    const denied = await updateKeyHandler(
+      deps,
+      keyRequest(seeded.id, "", "PATCH", { allowed_domains: [] }),
+      { id: seeded.id },
+    );
+    expect(denied.status).toBe(200);
+    await expect(readJson(denied)).resolves.toMatchObject({ key: { allowed_domains: [] } });
+    expect(await getApiKey(env.DB, seeded.id))
+      .toMatchObject({ allowed_domains_json: JSON.stringify([]) });
+
+    const audits = (await listAuditLog(env.DB, { limit: 50, offset: 0 })).filter((row) => row.target === seeded.id);
+    expect(audits[0]).toMatchObject({ action: "key.update", target: seeded.id });
+    expect(JSON.parse(audits[0].meta_json ?? "{}")).toEqual({ allowed_domains: [] });
+
+    // Restoring "all domains" flips the stored column back to NULL.
+    const restored = await updateKeyHandler(
+      deps,
+      keyRequest(seeded.id, "", "PATCH", { allowed_domains: null }),
+      { id: seeded.id },
+    );
+    expect(restored.status).toBe(200);
+    expect(await getApiKey(env.DB, seeded.id)).toMatchObject({ allowed_domains_json: null });
   });
 
   it("answers 400 for a missing field and 404 for an unknown key", async () => {

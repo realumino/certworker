@@ -530,5 +530,6 @@ Secrets (`wrangler secret put`): `CF_DNS_API_TOKEN`, `ENVELOPE_KEY`.
 1. **Failure alerting** — deferred (webhook/email later; nodes are never notified).
 2. **Access Service Auth for `/v1`** — optional hardening; default is Bypass.
 3. **Envelope key rotation** — deferred; needs versioned keys + rewrap command.
-4. **Per-key domain scoping UI** — done: `POST /api/keys` takes `allowed_domains`,
-   `PATCH /api/keys/:id` replaces it, rotate carries the scope over (M9).
+4. **Per-key domain scoping UI** — done: `POST /api/keys` takes `allowed_domains`
+   (`null` = all domains, `[]` = no domains), `PATCH /api/keys/:id` replaces it,
+   rotate carries the scope over (M9).

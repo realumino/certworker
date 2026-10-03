@@ -45,6 +45,13 @@ describe("GET /v1/me", () => {
     const { response } = await pull("/v1/me", bearerToken(key.id, SECRET));
     await expect(readJson(response)).resolves.toMatchObject({ allowed_domains: null });
   });
+
+  it("reports a deny-all key as an empty allowed_domains list", async () => {
+    const key = await seedApiKey(env.DB, { label: "node-c", secret: SECRET, allowedDomains: [] });
+    const { response } = await pull("/v1/me", bearerToken(key.id, SECRET));
+    expect(response.status).toBe(200);
+    await expect(readJson(response)).resolves.toMatchObject({ id: key.id, label: "node-c", allowed_domains: [] });
+  });
 });
 
 describe("GET /v1/domains", () => {
@@ -84,6 +91,15 @@ describe("GET /v1/domains", () => {
     const body = await readJson<{ domains: Array<Record<string, unknown>> }>(response);
     expect(body.domains).toHaveLength(1);
     expect(body.domains[0]).toMatchObject({ name: inScope.name, certificate: null });
+  });
+
+  it("returns no domains to a deny-all key", async () => {
+    await seedDomainWithCert({ name: "secret.example.com" });
+    await seedDomain(env.DB, { name: "other.secret.example.com" });
+    const key = await seedApiKey(env.DB, { secret: SECRET, allowedDomains: [] });
+    const { response } = await pull("/v1/domains", bearerToken(key.id, SECRET));
+    expect(response.status).toBe(200);
+    await expect(readJson<{ domains: unknown[] }>(response)).resolves.toMatchObject({ domains: [] });
   });
 });
 
@@ -207,6 +223,15 @@ describe("pull authorization and errors", () => {
 
     const invalid = await pull("/v1/domains/bad_name!/cert", token);
     expect(invalid.response.status).toBe(400);
+  });
+
+  it("403s every registered domain for a deny-all key", async () => {
+    const { domain } = await seedDomainWithCert({ name: "locked.example.com" });
+    const key = await seedApiKey(env.DB, { secret: SECRET, allowedDomains: [] });
+
+    const forbidden = await pull(`/v1/domains/${domain.name}/cert`, bearerToken(key.id, SECRET));
+    expect(forbidden.response.status).toBe(403);
+    await expect(readJson(forbidden.response)).resolves.toMatchObject({ error: "forbidden_domain" });
   });
 
   it("404s a domain with no current certificate", async () => {
