@@ -10,7 +10,7 @@ import { seedApiKey } from "./support/admin";
 const makeDeps = (): AdminDependencies => createAdminDependencies(env, "admin@example.com");
 
 function jsonRequest(body: unknown, method = "POST"): Request {
-  return new Request("https://ssl.example.com/api/keys", {
+  return new Request("https://certworker.example.org/api/keys", {
     method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -18,7 +18,7 @@ function jsonRequest(body: unknown, method = "POST"): Request {
 }
 
 function keyRequest(id: string, path: string, method = "POST"): Request {
-  return new Request(`https://ssl.example.com/api/keys/${id}${path}`, { method });
+  return new Request(`https://certworker.example.org/api/keys/${id}${path}`, { method });
 }
 
 describe("admin API keys — create", () => {
@@ -39,7 +39,7 @@ describe("admin API keys — create", () => {
     expect(row?.key_hint).toBe(`cw_${id}…${secret.slice(-4)}`);
     expect(row?.allowed_domains_json).toBeNull();
 
-    const listed = await listKeysHandler(makeDeps(), new Request("https://ssl.example.com/api/keys"));
+    const listed = await listKeysHandler(makeDeps(), new Request("https://certworker.example.org/api/keys"));
     const listedBody = JSON.stringify(await listed.json());
     expect(listedBody).not.toContain(secret);
     expect(listedBody).not.toContain("key_hash");

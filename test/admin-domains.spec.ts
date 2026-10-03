@@ -48,7 +48,7 @@ function zoneApi(zones: Array<{ id: string; name: string; status?: string }>): {
 }
 
 function jsonRequest(path: string, body: unknown, method = "POST"): Request {
-  return new Request(`https://ssl.example.com${path}`, {
+  return new Request(`https://certworker.example.org${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -191,7 +191,7 @@ describe("admin domains — list, get, update, delete", () => {
     const deleted = await seedDomain(env.DB, { name: "three.example.com", status: "deleted" });
     await seedCertificate(env.DB, env.CERTS, domain.id, env.ENVELOPE_KEY, { domainName: domain.name, sans: ["one.example.com"] });
 
-    const response = await listDomainsHandler(deps, new Request("https://ssl.example.com/api/domains"));
+    const response = await listDomainsHandler(deps, new Request("https://certworker.example.org/api/domains"));
     expect(response.status).toBe(200);
     const body = await readJson<Array<Record<string, unknown>>>(response);
     // Earlier tests in this file created other domains; this test owns exactly three rows.
@@ -208,7 +208,7 @@ describe("admin domains — list, get, update, delete", () => {
     const two = body.find((row) => row.name === "two.example.com");
     expect(two?.current_certificate).toBeNull();
 
-    const withDeleted = await listDomainsHandler(deps, new Request("https://ssl.example.com/api/domains?status=deleted"));
+    const withDeleted = await listDomainsHandler(deps, new Request("https://certworker.example.org/api/domains?status=deleted"));
     const deletedNames = (await readJson<Array<Record<string, unknown>>>(withDeleted)).map((row) => String(row.name));
     expect(deletedNames).toContain(deleted.name);
   });
@@ -216,11 +216,11 @@ describe("admin domains — list, get, update, delete", () => {
   it("returns a single domain or 404", async () => {
     const deps = makeDeps();
     const domain = await seedDomain(env.DB);
-    const found = await getDomainHandler(deps, new Request("https://ssl.example.com/api/domains/x"), { id: domain.id });
+    const found = await getDomainHandler(deps, new Request("https://certworker.example.org/api/domains/x"), { id: domain.id });
     expect(found.status).toBe(200);
     expect(((await found.json()) as { id: string }).id).toBe(domain.id);
 
-    const missing = await getDomainHandler(deps, new Request("https://ssl.example.com/api/domains/x"), { id: crypto.randomUUID() });
+    const missing = await getDomainHandler(deps, new Request("https://certworker.example.org/api/domains/x"), { id: crypto.randomUUID() });
     expect(missing.status).toBe(404);
   });
 
@@ -270,11 +270,11 @@ describe("admin domains — list, get, update, delete", () => {
     const deps = makeDeps();
     const domain = await seedDomain(env.DB);
 
-    const first = await deleteDomainHandler(deps, new Request("https://ssl.example.com/api/domains/x", { method: "DELETE" }), { id: domain.id });
+    const first = await deleteDomainHandler(deps, new Request("https://certworker.example.org/api/domains/x", { method: "DELETE" }), { id: domain.id });
     expect(first.status).toBe(200);
     expect(await first.json()).toMatchObject({ status: "deleted" });
 
-    const second = await deleteDomainHandler(deps, new Request("https://ssl.example.com/api/domains/x", { method: "DELETE" }), { id: domain.id });
+    const second = await deleteDomainHandler(deps, new Request("https://certworker.example.org/api/domains/x", { method: "DELETE" }), { id: domain.id });
     expect(second.status).toBe(200);
 
     const audits = (await listAuditLog(env.DB, { limit: 50, offset: 0 })).filter((row) => row.target === domain.id);
@@ -286,7 +286,7 @@ describe("admin domains — list, get, update, delete", () => {
     const domain = await seedDomain(env.DB);
     await seedIssueRun(env.DB, domain.id);
 
-    const response = await deleteDomainHandler(deps, new Request("https://ssl.example.com/api/domains/x", { method: "DELETE" }), { id: domain.id });
+    const response = await deleteDomainHandler(deps, new Request("https://certworker.example.org/api/domains/x", { method: "DELETE" }), { id: domain.id });
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: "run_in_progress" });
   });
@@ -311,7 +311,7 @@ describe("admin domains — manual issue", () => {
     const deps = makeDeps(undefined, issuance);
     const domain = await seedDomain(env.DB);
 
-    const response = await issueDomainHandler(deps, new Request("https://ssl.example.com/api/domains/x/issue", { method: "POST" }), { id: domain.id });
+    const response = await issueDomainHandler(deps, new Request("https://certworker.example.org/api/domains/x/issue", { method: "POST" }), { id: domain.id });
 
     expect(response.status).toBe(202);
     const body = await readJson<{ run_id: string; workflow_id: string }>(response);
@@ -330,17 +330,17 @@ describe("admin domains — manual issue", () => {
     const { issuance } = fakeIssuance();
     const deps = makeDeps(undefined, issuance);
     const paused = await seedDomain(env.DB, { status: "paused" });
-    const pausedResponse = await issueDomainHandler(deps, new Request("https://ssl.example.com/x/issue", { method: "POST" }), { id: paused.id });
+    const pausedResponse = await issueDomainHandler(deps, new Request("https://certworker.example.org/x/issue", { method: "POST" }), { id: paused.id });
     expect(pausedResponse.status).toBe(409);
     expect(await pausedResponse.json()).toMatchObject({ error: "domain_not_active" });
 
     const active = await seedDomain(env.DB);
     await seedIssueRun(env.DB, active.id);
-    const busy = await issueDomainHandler(deps, new Request("https://ssl.example.com/x/issue", { method: "POST" }), { id: active.id });
+    const busy = await issueDomainHandler(deps, new Request("https://certworker.example.org/x/issue", { method: "POST" }), { id: active.id });
     expect(busy.status).toBe(409);
     expect(await busy.json()).toMatchObject({ error: "run_in_progress" });
 
-    const missing = await issueDomainHandler(deps, new Request("https://ssl.example.com/x/issue", { method: "POST" }), { id: crypto.randomUUID() });
+    const missing = await issueDomainHandler(deps, new Request("https://certworker.example.org/x/issue", { method: "POST" }), { id: crypto.randomUUID() });
     expect(missing.status).toBe(404);
   });
 
@@ -353,7 +353,7 @@ describe("admin domains — manual issue", () => {
     const deps = makeDeps(undefined, issuance);
     const domain = await seedDomain(env.DB);
 
-    const response = await issueDomainHandler(deps, new Request("https://ssl.example.com/x/issue", { method: "POST" }), { id: domain.id });
+    const response = await issueDomainHandler(deps, new Request("https://certworker.example.org/x/issue", { method: "POST" }), { id: domain.id });
     expect(response.status).toBe(502);
     expect(await response.json()).toMatchObject({ error: "upstream_error" });
 
@@ -400,7 +400,7 @@ describe("admin domains — delete with revocation (M7)", () => {
   }
 
   function deleteRequest(): Request {
-    return new Request("https://ssl.example.com/api/domains/x", { method: "DELETE" });
+    return new Request("https://certworker.example.org/api/domains/x", { method: "DELETE" });
   }
 
   async function certificateRows(domainId: string): Promise<Array<Record<string, unknown>>> {

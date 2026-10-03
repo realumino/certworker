@@ -28,7 +28,7 @@ describe("admin certificates — list and detail", () => {
     const otherDomain = await seedDomain(env.DB, { name: "other.example.com" });
     await seedCertificate(env.DB, env.CERTS, otherDomain.id, env.ENVELOPE_KEY, { domainName: otherDomain.name });
 
-    const response = await listCertificatesHandler(makeDeps(), new Request("https://ssl.example.com/api/certificates"));
+    const response = await listCertificatesHandler(makeDeps(), new Request("https://certworker.example.org/api/certificates"));
     expect(response.status).toBe(200);
     const body = await readJson<Array<Record<string, unknown>>>(response);
     expect(body).toHaveLength(3);
@@ -42,7 +42,7 @@ describe("admin certificates — list and detail", () => {
 
     const byStatus = await listCertificatesHandler(
       makeDeps(),
-      new Request("https://ssl.example.com/api/certificates?status=superseded"),
+      new Request("https://certworker.example.org/api/certificates?status=superseded"),
     );
     const byStatusBody = await readJson<Array<Record<string, unknown>>>(byStatus);
     expect(byStatusBody).toHaveLength(1);
@@ -50,7 +50,7 @@ describe("admin certificates — list and detail", () => {
 
     const byDomain = await listCertificatesHandler(
       makeDeps(),
-      new Request(`https://ssl.example.com/api/certificates?domain_id=${domain.id}`),
+      new Request(`https://certworker.example.org/api/certificates?domain_id=${domain.id}`),
     );
     expect(await byDomain.json()).toHaveLength(2);
   });
@@ -58,7 +58,7 @@ describe("admin certificates — list and detail", () => {
   it("rejects an invalid status filter", async () => {
     const response = await listCertificatesHandler(
       makeDeps(),
-      new Request("https://ssl.example.com/api/certificates?status=bogus"),
+      new Request("https://certworker.example.org/api/certificates?status=bogus"),
     );
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: "invalid_status" });
@@ -69,11 +69,11 @@ describe("admin certificates — list and detail", () => {
     const cert = await seedCertificate(env.DB, env.CERTS, domain.id, env.ENVELOPE_KEY, { domainName: domain.name });
     const deps = makeDeps();
 
-    const found = await getCertificateHandler(deps, new Request("https://ssl.example.com/api/certificates/x"), { id: cert.id });
+    const found = await getCertificateHandler(deps, new Request("https://certworker.example.org/api/certificates/x"), { id: cert.id });
     expect(found.status).toBe(200);
     expect(await found.json()).toMatchObject({ id: cert.id, domain_name: domain.name });
 
-    const missing = await getCertificateHandler(deps, new Request("https://ssl.example.com/api/certificates/x"), { id: crypto.randomUUID() });
+    const missing = await getCertificateHandler(deps, new Request("https://certworker.example.org/api/certificates/x"), { id: crypto.randomUUID() });
     expect(missing.status).toBe(404);
     expect(await missing.json()).toMatchObject({ error: "not_found" });
   });
@@ -93,7 +93,7 @@ describe("admin certificates — download", () => {
     for (const [file, pem] of Object.entries(expected)) {
       const response = await downloadCertificateHandler(
         deps,
-        new Request(`https://ssl.example.com/api/certificates/${cert.id}/download?file=${file}`),
+        new Request(`https://certworker.example.org/api/certificates/${cert.id}/download?file=${file}`),
         { id: cert.id },
       );
       expect(response.status).toBe(200);
@@ -113,7 +113,7 @@ describe("admin certificates — download", () => {
 
     const response = await downloadCertificateHandler(
       makeDeps(),
-      new Request(`https://ssl.example.com/api/certificates/${cert.id}/download?file=key`),
+      new Request(`https://certworker.example.org/api/certificates/${cert.id}/download?file=key`),
       { id: cert.id },
     );
     expect(response.status).toBe(200);
@@ -127,7 +127,7 @@ describe("admin certificates — download", () => {
 
     const response = await downloadCertificateHandler(
       makeDeps(),
-      new Request(`https://ssl.example.com/api/certificates/${cert.id}/download?file=bundle`),
+      new Request(`https://certworker.example.org/api/certificates/${cert.id}/download?file=bundle`),
       { id: cert.id },
     );
     expect(response.status).toBe(200);
@@ -141,7 +141,7 @@ describe("admin certificates — download", () => {
 
     const response = await downloadCertificateHandler(
       makeDeps(),
-      new Request(`https://ssl.example.com/api/certificates/${cert.id}/download?file=key`),
+      new Request(`https://certworker.example.org/api/certificates/${cert.id}/download?file=key`),
       { id: cert.id },
     );
     expect(response.headers.get("content-disposition")).toContain("wildcard.wild.example.com-privkey.pem");
@@ -153,7 +153,7 @@ describe("admin certificates — download", () => {
 
     const badFile = await downloadCertificateHandler(
       deps,
-      new Request(`https://ssl.example.com/api/certificates/x/download?file=weird`),
+      new Request(`https://certworker.example.org/api/certificates/x/download?file=weird`),
       { id: crypto.randomUUID() },
     );
     expect(badFile.status).toBe(400);
@@ -161,7 +161,7 @@ describe("admin certificates — download", () => {
 
     const missingId = await downloadCertificateHandler(
       deps,
-      new Request(`https://ssl.example.com/api/certificates/${crypto.randomUUID()}/download?file=fullchain`),
+      new Request(`https://certworker.example.org/api/certificates/${crypto.randomUUID()}/download?file=fullchain`),
       { id: crypto.randomUUID() },
     );
     expect(missingId.status).toBe(404);
@@ -172,7 +172,7 @@ describe("admin certificates — download", () => {
     });
     const missingObject = await downloadCertificateHandler(
       deps,
-      new Request(`https://ssl.example.com/api/certificates/${noArtifacts.id}/download?file=cert`),
+      new Request(`https://certworker.example.org/api/certificates/${noArtifacts.id}/download?file=cert`),
       { id: noArtifacts.id },
     );
     expect(missingObject.status).toBe(404);
@@ -185,7 +185,7 @@ describe("admin certificates — download", () => {
     });
     const purgedResponse = await downloadCertificateHandler(
       deps,
-      new Request(`https://ssl.example.com/api/certificates/${purged.id}/download?file=fullchain`),
+      new Request(`https://certworker.example.org/api/certificates/${purged.id}/download?file=fullchain`),
       { id: purged.id },
     );
     expect(purgedResponse.status).toBe(404);
@@ -209,10 +209,10 @@ describe("admin certificates — revoke", () => {
   }
 
   function revokeRequest(id: string): Request {
-    return new Request(`https://ssl.example.com/api/certificates/${id}/revoke`, {
+    return new Request(`https://certworker.example.org/api/certificates/${id}/revoke`, {
       method: "POST",
       headers: {
-        "Origin": "https://ssl.example.com",
+        "Origin": "https://certworker.example.org",
         "Sec-Fetch-Site": "same-origin",
         "Content-Type": "application/json",
       },
@@ -245,7 +245,7 @@ describe("admin certificates — revoke", () => {
     await expect(
       getCertificateHandler(
         makeDeps(),
-        new Request("https://ssl.example.com/api/certificates/x"),
+        new Request("https://certworker.example.org/api/certificates/x"),
         { id: certificate.id },
       ),
     ).resolves.toMatchObject({ status: 200 });

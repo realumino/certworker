@@ -1,65 +1,198 @@
 # certworker
 
-Issues TLS certificates from Let's Encrypt (ACME v2, DNS-01 via the Cloudflare DNS
-API) on Cloudflare Workers, stores them in R2, and distributes them to nodes that
-pull periodically using per-node API keys (one key = one node).
+A single Cloudflare Worker that issues TLS certificates from Let's Encrypt (ACME v2,
+DNS-01 via the Cloudflare DNS API), stores them in R2, and serves them to nodes that
+pull periodically with per-node API keys.
 
-- Single Worker deployment, single hostname (`ssl.example.com`).
-- Admin panel: static SPA behind Cloudflare Access; admin API re-verifies the Access JWT.
-- Node pull API: `ssl.example.com/v1/*`, Access bypass, bearer API keys, ETag/304.
-- Renewal: daily cron creates Cloudflare Workflow instances for due domains.
-- Runs on the Workers **Free** plan (Workflows is included on both plans; free allows
-  10 ms CPU per step). Paid removes the free daily limits and raises per-step CPU to 30 s.
+It replaces the usual per-node certbot setup: certificates and private keys are
+generated **once, server-side**, and every authorized node pulls the **exact same
+certificate + key**. One Worker deployment covers issuance, renewal, storage,
+distribution, and an admin panel.
 
-Status: M0–M8 complete. M2 ACME client and issuance script issued a Let's Encrypt **staging** certificate live (SANs, chain, leaf-key match, and TXT cleanup verified). M3 persistence, Workflow pipeline, and internal manual trigger are implemented; the deployed Workflow issued end-to-end in ~40 s. M4 admin API, Access JWT verification, and the audit trail are implemented. M5 admin SPA is implemented (overview, domains, runs, certificates, API keys, pulls, audit; DOM tests run in happy-dom). M6 node pull API is implemented (bearer keys, ETag/304, per-key rate limit, pull events, last-use tracking). M7 adds certificate revocation (endpoint + revoke-on-domain-delete), the daily renewal cron, the sweeper, and the production environment config. M8 adds the reference node agent and its onboarding runbook (`agent/`); live onboarding on a Linode node passed (systemd units, nginx reload, `304` no-op, revoked key rejected).
+- **Runtime:** one Worker, one hostname (e.g. `certworker.example.org`).
+- **Admin surface:** React SPA + `/api/*`, protected by Cloudflare Access (no app login).
+- **Node surface:** `GET /v1/*`, public path with bearer API keys, ETag/`304` support.
+- **Renewal:** daily cron creates Cloudflare Workflow instances for due domains.
+- **Plans:** runs on the Workers **Free** plan (Workflows is included; free allows
+  10 ms CPU per step, which the ECDSA P-256 keygen/CSR fits). Paid removes the free
+  daily limits and raises per-step CPU to 30 s.
 
-Live execution surfaced a workerd-only defect: `AcmeClient.fetchRaw` invoked the global `fetch` as an instance method, which throws `Illegal invocation`. It is fixed in `04f5a58` with a regression test; the offline suite could not catch it because every test injects a mock fetcher. Only **staging** ACME has been exercised live — production LE is never used by tests.
+Design details and the data model live in [PLAN.md](./PLAN.md). The node agent and its
+onboarding runbook live in [agent/](./agent/README.md).
+
+---
+
+## What it does
+
+```
+ admin browser ──▶ certworker.example.org          Access app A: Allow (IdP/email)
+                    ├─ /*      → Static Assets (SPA)     (protected)
+                    └─ /api/*  → Admin API               JWT re-verified in Worker
+
+ node agent ──────▶ certworker.example.org/v1/*     Access app B: Bypass (public)
+ (systemd timer)        │                             Worker requires API key
+                        ▼
+                  CertificateWorkflow (durable steps, per run)
+                   create order → publish TXT → wait → validate
+                   → finalize → store → purge previous → cleanup
+```
+
+1. You add a domain row (apex, wildcard, or apex+wildcard) in the admin panel.
+2. The Workflow obtains an ECDSA P-256 certificate from Let's Encrypt using DNS-01
+   TXT records created through the Cloudflare DNS API, then stores the PEMs in R2 and
+   metadata in D1. The previous certificate is purged.
+3. You create an API key per node (shown once) and install the reference agent.
+4. The agent polls `GET /v1/domains/<name>/cert` on a systemd timer, skips unchanged
+   certificates with `If-None-Match`/`304`, validates with `openssl`, installs the
+   files, and reloads nginx only when the pair changed.
+5. The daily cron (`17 3 * * *`, UTC) reissues certificates whose `not_after` falls
+   within their `renew_before_days` window (default 30). Nodes pick the new pair up on
+   their next poll.
+
+## What you can expect
+
+**Admin panel** (behind Cloudflare Access) — routes under `/`:
+
+| View | What it gives you |
+|---|---|
+| Overview | counts, soonest expiry, failed runs, key last-use |
+| Domains | add/edit/pause domains, wildcard toggle, manual issue/reissue, delete (revokes first) |
+| Runs | per-domain workflow status and Let's Encrypt error payloads |
+| Certificates | history, metadata, download `fullchain` / `key` / `bundle`, revoke |
+| API Keys | create (plaintext shown **once**), rotate, revoke |
+| Pulls | which key pulled which domain, when, with what HTTP status |
+| Audit | every admin mutation with the Access email as actor |
+
+**Node pull API** (`/v1/*`) — GET only, `Authorization: Bearer cw_<id>.<secret>`:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/me` | key identity and allowed domains |
+| `GET /v1/domains` | visible domain list + current-cert metadata (cheap poll) |
+| `GET /v1/domains/:name/cert` | JSON manifest with all four PEMs (including the decrypted key) |
+| `GET /v1/domains/:name/files/:file` | raw `cert` / `chain` / `fullchain` / `key` |
+
+Responses carry `ETag: "<serial>-<fingerprint>"` and `Cache-Control: no-store`;
+sending the ETag back as `If-None-Match` returns `304` with no body and no decryption.
+Keys are rate limited to 60 requests / 60 s and stop working immediately on revoke.
+
+**Scope and limitations**
+
+- TLS certificate distribution copies the private key to every authorized node
+  (required so nodes serve an identical cert). A leaked key exposes exactly its
+  scoped domains; keys are per-node, scoped, rate limited, revocable, and audited.
+- ECDSA P-256 leaf keys only; no RSA in this version.
+- DNS-01 only, and only the Cloudflare DNS API.
+- Identical cert + key on every node — no per-node unique keys.
+- No push/notification to nodes; nodes pull. No expiry emails (Let's Encrypt removed
+  them); the dashboard is the notification surface.
+- No application-level user login; Cloudflare Access is the only admin auth.
+- Only Let's Encrypt **staging** has been exercised end-to-end in this repo; production
+  ACME is an explicit opt-in and is never used by tests.
+
+---
+
+## Configuration
+
+The Worker binding/variable contract is defined in `wrangler.example.jsonc` (tracked
+template). Local development uses a gitignored copy at `wrangler.jsonc`.
+
+### Bindings (wrangler config)
+
+| Binding | Type | Purpose |
+|---|---|---|
+| `ASSETS` | Static Assets | admin SPA from `web/dist` |
+| `DB` | D1 | domains, certificates, runs, keys, pull events, audit |
+| `CERTS` | R2 | PEMs and the encrypted private keys |
+| `ISSUANCE` | Workflow | `CertificateWorkflow` (class in `src/issue/workflow.ts`) |
+| `PULL_LIMITER` | Rate limit | per-key pulls, `simple: { limit: 60, period: 60 }` |
+
+Cron trigger: `17 3 * * *` (daily renewal + sweeper).
+
+### Variables
+
+| Variable | Meaning |
+|---|---|
+| `ACCESS_TEAM_DOMAIN` | e.g. `https://<team>.cloudflareaccess.com`; JWKS is fetched from `<domain>/cdn-cgi/access/certs` |
+| `ACCESS_AUD` | Access application AUD tag for the admin app; verified together with `iss` |
+| `ACME_DIRECTORY` | `https://acme-staging-v02.api.letsencrypt.org/directory` (staging) or `https://acme-v02.api.letsencrypt.org/directory` (production) |
+| `DEV_ACCESS_EMAIL` | Local only. Empty in every deployed environment. When set, `/api/*` from loopback hosts skips JWT verification and uses this email as the audit actor |
+
+### Secrets
+
+| Secret | Meaning |
+|---|---|
+| `CF_DNS_API_TOKEN` | Cloudflare API token with `Zone:Zone:Read` + `Zone:DNS:Edit` on the zones you issue for |
+| `ENVELOPE_KEY` | base64 of 32 random bytes, `openssl rand -base64 32`; AES-256-GCM key that encrypts private keys at rest. **Use a distinct value per environment and keep it** |
+
+Copy `.dev.vars.example` to `.dev.vars` for local runs. `.dev.vars` and `wrangler.jsonc`
+are gitignored.
+
+### Cloudflare Access
+
+Two Access applications on the same hostname:
+
+- **App A** — pattern `certworker.example.org`, policy Allow (IdP/email). Protects the SPA and `/api/*`.
+- **App B** — pattern `certworker.example.org/v1`, policy **Bypass** (or Service Auth for extra hardening). The Worker enforces the API key either way.
+
+Set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` from app A. The Worker verifies the injected
+`Cf-Access-Jwt-Assertion` (RS256, `iss`, `aud`) on every admin request, so `/api/*` is
+never protected by network position alone.
+
+### Environments
+
+`wrangler.example.jsonc` defines a staging top-level config and an `env.production`
+block:
+
+| | staging (default) | production (`--env production`) |
+|---|---|---|
+| Worker name | `certworker-staging` | `certworker` |
+| ACME directory | LE staging | LE production |
+| D1 | `certworker-staging` | `certworker` |
+| R2 | `certworker-artifacts-staging` | `certworker-artifacts` |
+| Secrets | set separately | set separately (distinct `ENVELOPE_KEY`) |
+
+The top-level staging Worker has no custom-domain route, so it deploys to
+`certworker-staging.<subdomain>.workers.dev`. The `env.production` block carries the
+`routes` entry (`certworker.example.org` in the template) — replace it with your host.
+Because both environments share one hostname, moving it between them is a cutover:
+release the route from the previous Worker first.
+
+---
 
 ## Local development
 
-Prerequisites: Node.js >= 22 (Wrangler 4 requires it) and npm.
+Prerequisites: Node.js >= 22 (Wrangler 4 requires it), npm.
 
 ```sh
 npm install
-cp wrangler.example.jsonc wrangler.jsonc   # working config; wrangler.jsonc is gitignored
-cp .dev.vars.example .dev.vars
-npm run build:web          # builds the admin SPA -> web/dist (required before wrangler dev / vitest)
-npm run types              # regenerate worker-configuration.d.ts after changing wrangler.jsonc
-npm run db:migrate:local   # apply migrations to the local D1 database (.wrangler/state)
-npm test                   # workerd-pool tests + the SPA DOM suite (happy-dom)
-npm run dev                # wrangler dev on http://localhost:8787
+cp wrangler.example.jsonc wrangler.jsonc   # working config; gitignored
+cp .dev.vars.example .dev.vars             # add a dev DNS token + ENVELOPE_KEY
+npm run build:web                          # builds the admin SPA -> web/dist (needed first)
+npm run types                              # regenerate worker-configuration.d.ts after config changes
+npm run db:migrate:local                   # apply migrations to local D1 (.wrangler/state)
+npm test                                   # workerd tests + SPA DOM suite
+npm run dev                                # wrangler dev on http://localhost:8787
 ```
 
-`wrangler.jsonc` is gitignored; the tracked template is `wrangler.example.jsonc`. The
-working copy must exist for `npm test`, `npm run types`, and `wrangler dev`, since
-`vitest.config.ts` and Wrangler both read `./wrangler.jsonc`.
+`web/dist`, `wrangler.jsonc`, and `.dev.vars` must exist before `npm test`,
+`npm run types`, and `npm run dev`; `vitest.config.ts` and Wrangler both read
+`./wrangler.jsonc`. The placeholder D1/R2 IDs in the template are fine locally.
 
-Iterating on the SPA: run `npm run dev` in one terminal and `npm run dev -w web` in a
-second. The Vite dev server on http://localhost:5173 hot-reloads and proxies `/api` to
-`wrangler dev` on port 8787.
+**Admin dev loop.** With `DEV_ACCESS_EMAIL` set in `.dev.vars` (the example sets
+`dev@example.com`), requests from `localhost`/`127.0.0.1`/`[::1]` skip Access JWT
+verification and audit as that address. For SPA hot reload, run `npm run dev` in one
+terminal and `npm run dev -w web` in another — Vite serves `http://localhost:5173` and
+proxies `/api` to `wrangler dev` on 8787.
 
-The admin API (`/api/*`) requires the `Cf-Access-Jwt-Assertion` header injected by
-Cloudflare Access; the Worker verifies its RS256 signature against the team JWKS
-(`${ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`) plus `iss` and `aud`, rejecting
-everything else with 401. Mutations are additionally same-origin and JSON-only.
-Every admin mutation is recorded in the `audit_log` D1 table with the Access
-email as the actor.
+**Trigger the cron locally.** With `npx wrangler dev --test-scheduled`:
 
-For local development behind `wrangler dev` (where no Access sits in front), set
-`DEV_ACCESS_EMAIL` in `.dev.vars`: requests from loopback hosts then skip JWT
-verification and use that email as the audit actor. The variable is empty in
-the config template (`wrangler.example.jsonc`), so deployed Workers never run
-the bypass — it is also unreachable on any non-loopback hostname.
+```sh
+curl 'http://localhost:8787/__scheduled?cron=17+3+*+*+*'
+```
 
-Deployment placeholders: the tracked template `wrangler.example.jsonc` carries
-placeholder D1/R2 IDs and Access values; `wrangler.jsonc` is a gitignored copy.
-Replace the placeholders (`wrangler d1 create certworker`, `wrangler r2 bucket
-create certworker-artifacts`) before the first deploy.
-
-## M2 staging issuance
-
-Set `CF_DNS_API_TOKEN` in `.dev.vars` (or the process environment) with `Zone:Zone:Read`
-and `Zone:DNS:Edit` on a dedicated test zone, then run:
+**Issue a real staging certificate from the CLI** (bypasses the Worker; uses the ACME
+client directly and needs `CF_DNS_API_TOKEN`):
 
 ```sh
 npm run issue -- example.com                  # apex + wildcard by default
@@ -67,97 +200,82 @@ npm run issue -- '*.example.com'              # wildcard only
 npm run issue -- example.com --no-wildcard    # apex only
 ```
 
-The script defaults to Let's Encrypt staging, waits for DNS-01 propagation through
-Cloudflare and Google DoH, and deletes its TXT records during cleanup. It stores the
-staging account and downloaded artifacts under `.wrangler/acme/` (gitignored). The
-local account and leaf private keys are plaintext development artifacts; do not copy
-them into production storage. Any non-staging directory requires `--allow-production`.
+It defaults to LE staging, waits for DNS-01 propagation, deletes its TXT records, and
+writes artifacts to `.wrangler/acme/`. Any non-staging directory requires
+`--allow-production`.
 
-The offline suite covers the ACME/Cloudflare DNS flows. A live staging run against a
-real test zone and DNS token has been performed and passed (apex + wildcard; SANs and
-leaf-key match asserted, chain inspected, TXT records removed on success and failure).
+Tests run in two suites: `vitest run` (worker, `@cloudflare/vitest-pool-workers`,
+mocked ACME/DNS, migrations applied in setup) and `npm run test -w web` (SPA, happy-dom
++ Testing Library). `npm test` runs both after building the SPA. `npm run check` runs
+all four TypeScript projects (worker, tests, scripts, web).
 
-## Renewals, sweeper, and revocation (M7)
+---
 
-**Daily renewals.** The cron trigger `17 3 * * *` fires `scheduled()` (`src/index.ts`), which jitters 0–60 s and then creates one `CertificateWorkflow` instance per active domain that has no current certificate or whose `not_after` falls within its `renew_before_days`. Instance IDs are `renew-<domainId>-<yyyy-mm-dd>` (UTC), so an accidental same-day repeat skips instead of reissuing; the `idx_run_active` partial unique index serializes renewals against manual runs. Failures are per-domain and recorded on the run row. Locally: `npx wrangler dev --test-scheduled`, then
+## Deploy to Cloudflare
+
+### 1. Create resources and fill in the config
 
 ```sh
-curl 'http://localhost:8787/__scheduled?cron=17+3+*+*+*'
+npx wrangler d1 create certworker-staging
+npx wrangler r2 bucket create certworker-artifacts-staging
+# for production:
+npx wrangler d1 create certworker
+npx wrangler r2 bucket create certworker-artifacts
 ```
 
-**Sweeper.** The same invocation cleans up state a crashed pipeline could not finish: R2 prefixes of certificates with `status != 'current' AND purged_at IS NULL` are deleted and marked purged, and `_acme-challenge` TXT records recorded in `challenge_records` older than 24 h are deleted via the DNS API. Every step is best-effort and logged (`cron.complete`, `sweeper.*`).
+Copy the printed D1 IDs into `wrangler.jsonc` (top level and under `env.production`),
+set the R2 bucket names, `ACME_DIRECTORY`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, and the
+production `routes` pattern. Then `npm run types`.
 
-**Revocation.** `POST /api/certificates/:id/revoke` (admin API, Access-protected) revokes via ACME `revokeCert` signed with the issuing account key, then deletes the stored PEMs and flips the D1 row to `revoked`. It is idempotent: a repeat call or an `alreadyRevoked` answer from the CA still ends `revoked`+purged and issues no second CA request. A certificate whose artifacts were already purged can no longer be revoked (409). `DELETE /api/domains/:id` revokes the current certificate first, then soft-deletes the row; while the CA rejects the revocation the deletion is refused with 502, and the audit entry records the revoke outcome.
-
-## Staging and production (M7)
-
-The config carries an `env.production` block: production ACME directory (`https://acme-v02.api.letsencrypt.org/directory`), separate D1 (`certworker-prod`) and R2 bucket (`certworker-artifacts-prod`). The top-level (staging) environment deploys the `certworker-staging` Worker; `env.production` overrides `name` to `certworker`. Cron triggers and assets are inherited from the top level; deploy and configure it with:
+### 2. Apply migrations and set secrets
 
 ```sh
-npx wrangler d1 create certworker-prod
-npx wrangler r2 bucket create certworker-artifacts-prod   # paste both IDs into env.production
+npx wrangler d1 migrations apply DB --remote
+npx wrangler secret put CF_DNS_API_TOKEN
+npx wrangler secret put ENVELOPE_KEY          # openssl rand -base64 32
+
+# production:
 npx wrangler d1 migrations apply DB --env production --remote
 npx wrangler secret put CF_DNS_API_TOKEN --env production
 npx wrangler secret put ENVELOPE_KEY --env production   # distinct from staging
-npx wrangler deploy --env production
 ```
 
-Both environments share the single hostname: moving `ssl.example.com` from one Worker to the other is a cutover, so release the route from the previous Worker first.
+### 3. Create Access applications
 
-## Node pull API (M6)
+Create app A on your host (Allow policy) and app B on `/<your host>/v1` (Bypass).
+Put app A's team domain and AUD in the `vars` block, then redeploy if you changed them.
 
-Nodes authenticate with a one-time `cw_<id>.<secret>` token created in the admin
-panel (POST /api/keys); only the SHA-256 of the secret is stored. All endpoints are
-GET-only under `ssl.example.com/v1/*`:
+### 4. Deploy
 
 ```sh
-TOKEN=$(cat /etc/certworker/token)   # cw_<id>.<secret>
-
-# Manifest with metadata and all four PEMs (including the decrypted private key)
-curl -sS -H "Authorization: Bearer $TOKEN" \
-  https://ssl.example.com/v1/domains/example.com/cert
-
-# Raw files: cert | chain | fullchain | key
-curl -sS -H "Authorization: Bearer $TOKEN" \
-  https://ssl.example.com/v1/domains/example.com/files/fullchain
-
-# Cheap poll (scoped domains + current-cert metadata, no PEMs)
-curl -sS -H "Authorization: Bearer $TOKEN" https://ssl.example.com/v1/domains
-
-# Key identity and scope
-curl -sS -H "Authorization: Bearer $TOKEN" https://ssl.example.com/v1/me
+npm run deploy                    # staging: build SPA + wrangler deploy
+npx wrangler deploy --env production   # production
 ```
 
-Responses carry `ETag: "<serial>-<fingerprint>"` and `Cache-Control: no-store`.
-Sending the stored ETag back as `If-None-Match` returns `304` with no body and no
-decryption work; never reload on a `304`. Successful and failed per-domain pulls
-(`200`/`304`/`403`/`404`) are logged to `pull_events`, and `last_used_at` is
-throttled to one update per 60 s per key. Keys are rate limited (60 requests/60 s
-per key via the `PULL_LIMITER` binding) and rejected immediately once revoked.
-Domains are pulled by row name (`example.com` or `*.example.com`); a key whose
-`allowed_domains` is null may pull every non-deleted domain.
+After the first production deploy, open the admin panel, add a domain, run **Issue**,
+then create an API key and onboard the node with [agent/README.md](./agent/README.md).
 
-## Node agent (M8)
+### 5. Onboard a node
 
-`agent/` ships the reference node agent: a `certworker-pull` shell script plus
-`certworker-pull.service`/`.timer`, and the onboarding runbook in
-[agent/README.md](./agent/README.md). On a fresh node:
+See [agent/README.md](./agent/README.md) for the full runbook. Short version: install
+`agent/certworker-pull` and the systemd units, put the `cw_<id>.<secret>` token in
+`/etc/certworker/token` (mode `600`), set `CERTWORKER_API`/`ExecStart` in the service
+unit, run the service once to install the PEMs under `/etc/nginx/ssl`, then
+`systemctl enable --now certworker-pull.timer` (polls every 15 min ±5 min).
 
-```sh
-install -d -m 700 /etc/certworker
-umask 077
-printf '%s\n' 'cw_<id>.<secret>' > /etc/certworker/token   # from the admin Keys view
-chmod 600 /etc/certworker/token
-install -m 755 certworker-pull /usr/local/bin/certworker-pull
-install -m 644 certworker-pull.service certworker-pull.timer /etc/systemd/system/
-# edit CERTWORKER_API and ExecStart= in the service unit, then:
-systemctl daemon-reload
-systemctl start certworker-pull.service     # first pull, installs .pem/.key under /etc/nginx/ssl
-systemctl enable --now certworker-pull.timer
-```
+---
 
-The agent polls every 15 minutes (±5 min jitter), skips unchanged certificates
-with `If-None-Match`/`304`, validates each pair with `openssl`, and reloads nginx
-only after a change. The node needs `curl`, `jq`, `openssl`, and nginx.
+## Operations
 
-Full design: [PLAN.md](./PLAN.md).
+- **Renewals** are automatic and server-side; nodes only pull. Reissue manually from
+  the admin panel (**Domains → Issue**) at any time.
+- **Revocation:** revoking a certificate or deleting a domain revokes it via ACME and
+  purges the stored PEMs. Revocation is idempotent; an already-purged certificate can no
+  longer be revoked (409).
+- **Sweeper:** the daily invocation also purges R2 prefixes of non-current certificates
+  and deletes stale `_acme-challenge` TXT records (>24 h). All steps are best-effort and
+  logged (`cron.complete`, `sweeper.*`).
+- **Logs:** `npx wrangler tail` for worker logs. Admin failures log structured
+  `admin.request_failed`; cron logs `cron.complete` / `cron.failed`.
+- **Key rotation:** rotate a key in the admin **Keys** view and install the new token
+  on the node; the old key stops working immediately.

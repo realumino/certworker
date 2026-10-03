@@ -8,7 +8,7 @@ function accessConfig(access: TestAccess): AccessConfig {
   return { teamDomain: access.teamDomain, aud: access.aud, devEmail: null };
 }
 
-function authedRequest(token: string, url = "https://ssl.example.com/api/overview"): Request {
+function authedRequest(token: string, url = "https://certworker.example.org/api/overview"): Request {
   return new Request(url, { headers: { [ACCESS_JWT_HEADER]: token } });
 }
 
@@ -49,7 +49,7 @@ describe("Access JWT verification", () => {
     const access = await createTestAccess();
     const { fetch } = jwksFetcher(access);
     const result = await verifyAccessRequest(
-      new Request("https://ssl.example.com/api/overview"),
+      new Request("https://certworker.example.org/api/overview"),
       accessConfig(access),
       { fetcher: fetch },
     );
@@ -164,7 +164,7 @@ describe("Access JWT verification", () => {
 
     it("never bypasses on a non-loopback host", async () => {
       const response = await rejectIdentity(await verifyAccessRequest(
-        new Request("https://ssl.example.com/api/overview"),
+        new Request("https://certworker.example.org/api/overview"),
         { teamDomain: "", aud: "", devEmail: "dev@example.com" },
       ));
       expect(response.status).toBe(401);

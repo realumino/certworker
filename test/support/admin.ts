@@ -75,14 +75,14 @@ export function jwksFetcher(access: TestAccess) {
 /** Same-origin JSON mutation (or plain read) with the Access JWT header — the SPA's shape. */
 export function accessRequest(path: string, token: string, init: RequestInit = {}): Request {
   const headers: Record<string, string> = {
-    "Origin": "https://ssl.example.com",
+    "Origin": "https://certworker.example.org",
     "Sec-Fetch-Site": "same-origin",
     // Every admin mutation is JSON-only, including body-less POST/DELETE.
     "Content-Type": "application/json",
   };
   if (token !== "") headers[ACCESS_JWT_HEADER] = token;
 
-  return new Request(`https://ssl.example.com${path}`, {
+  return new Request(`https://certworker.example.org${path}`, {
     ...init,
     headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
   });

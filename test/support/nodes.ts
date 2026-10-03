@@ -14,7 +14,7 @@ export function pullRequest(path: string, token?: string, init: RequestInit = {}
     ...(init.headers as Record<string, string> | undefined),
   };
   if (token !== undefined) headers.Authorization = `Bearer ${token}`;
-  return new Request(`https://ssl.example.com${path}`, { ...init, headers });
+  return new Request(`https://certworker.example.org${path}`, { ...init, headers });
 }
 
 /**

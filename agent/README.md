@@ -56,7 +56,7 @@ Verify the token before going further:
 
 ```sh
 curl -sS -H "Authorization: Bearer $(cat /etc/certworker/token)" \
-  https://ssl.example.com/v1/me
+  https://certworker.example.org/v1/me
 ```
 
 ## 3. Configure the node
@@ -68,7 +68,7 @@ Use the exact names from the admin Domains view (`example.com`, or
 covers both `example.com` and `*.example.com` with one file pair.
 
 ```ini
-Environment=CERTWORKER_API=https://ssl.example.com/v1
+Environment=CERTWORKER_API=https://certworker.example.org/v1
 ExecStart=/usr/local/bin/certworker-pull example.com api.example.com
 ```
 

@@ -38,14 +38,14 @@ and removes the free daily request/step limits. No Queues are used.
 
 ## 2. Architecture
 
-One Worker, one deployable, **one hostname**: `ssl.example.com`.
+One Worker, one deployable, **one hostname**: `certworker.example.org`.
 
 ```
- admin browser ──▶ ssl.example.com                  Access app A: Allow (IdP/email)
+ admin browser ──▶ certworker.example.org           Access app A: Allow (IdP/email)
                     ├─ /*      → Static Assets (SPA)      (protected)
                     └─ /api/*  → Admin API                JWT re-verified in Worker
 
- node agent ──────▶ ssl.example.com/v1/*             Access app B: Bypass (public)
+ node agent ──────▶ certworker.example.org/v1/*      Access app B: Bypass (public)
  (systemd timer)        │                              Worker requires API key
                         ▼
                   CertificateWorkflow (durable steps, per run)
@@ -64,9 +64,9 @@ One Worker, one deployable, **one hostname**: `ssl.example.com`.
 
 | Path | Handler | Access app | Worker-side check |
 |---|---|---|---|
-| `/`, SPA routes | Static Assets (`ASSETS`) | A (`ssl.example.com`) | — |
-| `/api/*` | Admin API | A (`ssl.example.com`) | Access JWT (`iss` + `aud`) |
-| `/v1/*` | Node pull API | B (`ssl.example.com/v1`) | API key (`Bearer cw_…`) |
+| `/`, SPA routes | Static Assets (`ASSETS`) | A (`certworker.example.org`) | — |
+| `/api/*` | Admin API | A (`certworker.example.org`) | Access JWT (`iss` + `aud`) |
+| `/v1/*` | Node pull API | B (`certworker.example.org/v1`) | API key (`Bearer cw_…`) |
 
 Access evaluates the most specific path first, so `/v1/*` uses app B and never
 redirects to login. The layering is deliberately asymmetric:
@@ -89,7 +89,7 @@ policy instead of Bypass, so nodes additionally present `CF-Access-Client-Id/Sec
 | Challenge type | DNS-01 only (mandatory for wildcards; no inbound HTTP) |
 | DNS provider | Cloudflare DNS API, scoped token (`Zone:DNS:Edit` + `Zone:Zone:Read`) |
 | Deployment shape | Single Worker — UI assets + admin API + node API in one script |
-| Hostname | One: `ssl.example.com` (path-scoped Access apps) |
+| Hostname | One: `certworker.example.org` (path-scoped Access apps) |
 | Admin auth | Cloudflare Access + Worker-side JWT verification |
 | Node auth | Bearer API key, **one key = one node**; no separate node entity |
 | Leaf key type | ECDSA P-256 |
@@ -375,8 +375,8 @@ Rate limiting binding per key; `allowed_domains_json = NULL` means all domains
 
 ## 10. Security model
 
-- **Access**: app A (`ssl.example.com`) allow-policy for humans; app B
-  (`ssl.example.com/v1`) bypass for nodes. The Worker still verifies
+- **Access**: app A (`certworker.example.org`) allow-policy for humans; app B
+  (`certworker.example.org/v1`) bypass for nodes. The Worker still verifies
   `Cf-Access-Jwt-Assertion` against `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`
   (JWKS cached per isolate), checking `iss` + `aud`. Network position is never the
   only control on `/api/*`.
@@ -444,12 +444,12 @@ certworker/
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/v1/*"]
   },
-  "d1_databases": [{ "binding": "DB", "database_name": "certworker", "database_id": "<id>" }],
-  "r2_buckets": [{ "binding": "CERTS", "bucket_name": "certworker-artifacts" }],
-  "workflows": [{ "name": "certificate-issuance", "binding": "ISSUANCE", "class_name": "CertificateWorkflow" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "certworker-staging", "database_id": "<id>" }],
+  "r2_buckets": [{ "binding": "CERTS", "bucket_name": "certworker-artifacts-staging" }],
+  "workflows": [{ "name": "certificate-issuance-staging", "binding": "ISSUANCE", "class_name": "CertificateWorkflow" }],
   "ratelimits": [{ "name": "PULL_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
   "triggers": { "crons": ["17 3 * * *"] },
-  "routes": [{ "pattern": "ssl.example.com", "custom_domain": true }],
+  "routes": [{ "pattern": "certworker.example.org", "custom_domain": true }],
   "vars": {
     "ACCESS_TEAM_DOMAIN": "https://<team>.cloudflareaccess.com",
     "ACCESS_AUD": "<aud>",
@@ -459,8 +459,8 @@ certworker/
     "production": {
       "name": "certworker",
       "vars": { "ACME_DIRECTORY": "https://acme-v02.api.letsencrypt.org/directory" },
-      "d1_databases": [{ "binding": "DB", "database_name": "certworker-prod", "database_id": "<id>" }],
-      "r2_buckets": [{ "binding": "CERTS", "bucket_name": "certworker-artifacts-prod" }]
+      "d1_databases": [{ "binding": "DB", "database_name": "certworker", "database_id": "<id>" }],
+      "r2_buckets": [{ "binding": "CERTS", "bucket_name": "certworker-artifacts" }]
     }
   }
 }

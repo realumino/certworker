@@ -18,13 +18,13 @@
 #
 # Environment overrides (defaults in parentheses) exist for non-default layouts
 # and for the offline test harness:
-#   CERTWORKER_API        base URL of the pull API       (https://ssl.example.com/v1)
+#   CERTWORKER_API        base URL of the pull API       (https://certworker.example.org/v1)
 #   CERTWORKER_CONF_DIR   holds `token` (0600)           (/etc/certworker)
 #   CERTWORKER_STATE_DIR  holds etags and staging files  (/var/lib/certworker)
 #   CERTWORKER_OUT_DIR    destination for .pem and .key  (/etc/nginx/ssl)
 set -euo pipefail
 
-API_BASE="${CERTWORKER_API:-https://ssl.example.com/v1}"
+API_BASE="${CERTWORKER_API:-https://certworker.example.org/v1}"
 CONF_DIR="${CERTWORKER_CONF_DIR:-/etc/certworker}"
 TOKEN_FILE="$CONF_DIR/token"
 STATE_DIR="${CERTWORKER_STATE_DIR:-/var/lib/certworker}"

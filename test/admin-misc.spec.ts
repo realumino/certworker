@@ -13,7 +13,7 @@ const makeDeps = (): AdminDependencies => createAdminDependencies(env, "admin@ex
 
 describe("admin overview", () => {
   it("reports zeros on an empty database", async () => {
-    const response = await getOverviewHandler(makeDeps(), new Request("https://ssl.example.com/api/overview"));
+    const response = await getOverviewHandler(makeDeps(), new Request("https://certworker.example.org/api/overview"));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       domains: { active: 0, paused: 0, deleted: 0, total: 0 },
@@ -35,7 +35,7 @@ describe("admin overview", () => {
     await finishIssueRun(env.DB, runId, activeDomain.id, { status: "failed", error: "boom" });
     await seedApiKey(env.DB, { label: "node-1" });
 
-    const response = await getOverviewHandler(makeDeps(), new Request("https://ssl.example.com/api/overview"));
+    const response = await getOverviewHandler(makeDeps(), new Request("https://certworker.example.org/api/overview"));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       domains: { active: 1, paused: 1, deleted: 0, total: 2 },
@@ -66,7 +66,7 @@ describe("admin pulls listing", () => {
     await seedPullEvent(env.DB, otherKey.id, otherDomain.id);
     const deps = makeDeps();
 
-    const all = await listPullsHandler(deps, new Request("https://ssl.example.com/api/pulls"));
+    const all = await listPullsHandler(deps, new Request("https://certworker.example.org/api/pulls"));
     expect(all.status).toBe(200);
     const allBody = await readJson<Array<Record<string, unknown>>>(all);
     expect(allBody).toHaveLength(2);
@@ -78,25 +78,25 @@ describe("admin pulls listing", () => {
       status: 200,
     });
 
-    const byKey = await listPullsHandler(deps, new Request(`https://ssl.example.com/api/pulls?api_key_id=${key.id}`));
+    const byKey = await listPullsHandler(deps, new Request(`https://certworker.example.org/api/pulls?api_key_id=${key.id}`));
     const byKeyBody = await readJson<Array<Record<string, unknown>>>(byKey);
     expect(byKeyBody).toHaveLength(1);
     expect(byKeyBody[0].api_key_label).toBe("node-1");
 
-    const byDomain = await listPullsHandler(deps, new Request(`https://ssl.example.com/api/pulls?domain_id=${otherDomain.id}`));
+    const byDomain = await listPullsHandler(deps, new Request(`https://certworker.example.org/api/pulls?domain_id=${otherDomain.id}`));
     const byDomainBody = await readJson<Array<Record<string, unknown>>>(byDomain);
     expect(byDomainBody).toHaveLength(1);
     expect(byDomainBody[0].domain_name).toBe("two.example.com");
   });
 
   it("validates pagination", async () => {
-    const tooHigh = await listPullsHandler(makeDeps(), new Request("https://ssl.example.com/api/pulls?limit=999"));
+    const tooHigh = await listPullsHandler(makeDeps(), new Request("https://certworker.example.org/api/pulls?limit=999"));
     expect(tooHigh.status).toBe(400);
 
-    const notANumber = await listPullsHandler(makeDeps(), new Request("https://ssl.example.com/api/pulls?limit=abc"));
+    const notANumber = await listPullsHandler(makeDeps(), new Request("https://certworker.example.org/api/pulls?limit=abc"));
     expect(notANumber.status).toBe(400);
 
-    const negative = await listPullsHandler(makeDeps(), new Request("https://ssl.example.com/api/pulls?offset=-1"));
+    const negative = await listPullsHandler(makeDeps(), new Request("https://certworker.example.org/api/pulls?offset=-1"));
     expect(negative.status).toBe(400);
   });
 });
@@ -107,14 +107,14 @@ describe("admin audit listing", () => {
     await insertAuditLog(env.DB, { actor: "a@example.com", action: "key.create", target: "k1" });
     const deps = makeDeps();
 
-    const all = await listAuditHandler(deps, new Request("https://ssl.example.com/api/audit"));
+    const all = await listAuditHandler(deps, new Request("https://certworker.example.org/api/audit"));
     expect(all.status).toBe(200);
     const allBody = await readJson<Array<Record<string, unknown>>>(all);
     expect(allBody).toHaveLength(2);
     expect(allBody.map((row) => row.action).sort()).toEqual(["domain.create", "key.create"]);
     expect(allBody[0]).toMatchObject({ actor: "a@example.com", target: expect.anything() });
 
-    const filtered = await listAuditHandler(deps, new Request("https://ssl.example.com/api/audit?action=domain.create"));
+    const filtered = await listAuditHandler(deps, new Request("https://certworker.example.org/api/audit?action=domain.create"));
     const filteredBody = await readJson<Array<Record<string, unknown>>>(filtered);
     expect(filteredBody).toHaveLength(1);
     expect(filteredBody[0]).toMatchObject({ action: "domain.create", target: "d1", meta: { name: "one.example.com" } });

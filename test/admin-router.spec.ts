@@ -15,7 +15,7 @@ describe("admin router", () => {
   it("rejects requests without an Access JWT", async () => {
     const { options } = await authenticatedAccess();
     const response = await handleAdminApi(
-      new Request("https://ssl.example.com/api/overview"),
+      new Request("https://certworker.example.org/api/overview"),
       env,
       options,
     );
@@ -57,10 +57,10 @@ describe("admin router", () => {
   it("rejects mutations without a JSON content type", async () => {
     const { access, token, options } = await authenticatedAccess();
     const response = await handleAdminApi(
-      new Request("https://ssl.example.com/api/keys", {
+      new Request("https://certworker.example.org/api/keys", {
         method: "POST",
         headers: {
-          "Origin": "https://ssl.example.com",
+          "Origin": "https://certworker.example.org",
           "Sec-Fetch-Site": "same-origin",
           "Content-Type": "text/plain",
           "Cf-Access-Jwt-Assertion": token,
@@ -134,7 +134,7 @@ describe("admin router", () => {
   it("allows non-browser clients without Origin/Sec-Fetch-Site", async () => {
     const { access, token, options } = await authenticatedAccess();
     const response = await handleAdminApi(
-      new Request("https://ssl.example.com/api/keys", {
+      new Request("https://certworker.example.org/api/keys", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -28,7 +28,7 @@ export function installFetchStub(routes: Record<string, RouteResponder>): FetchS
   const requests: RecordedRequest[] = [];
 
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "https://ssl.example.com");
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "https://certworker.example.org");
     const method = (init?.method ?? "GET").toUpperCase();
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
     const request: RecordedRequest = { method, path: url.pathname + url.search, body };

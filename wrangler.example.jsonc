@@ -17,24 +17,24 @@
   },
   // Placeholder IDs are fine for local dev. Replace both before the first remote
   // command or deploy:
-  //   npx wrangler d1 create certworker
-  //   npx wrangler r2 bucket create certworker-artifacts
+  //   npx wrangler d1 create certworker-staging
+  //   npx wrangler r2 bucket create certworker-artifacts-staging
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "certworker",
+      "database_name": "certworker-staging",
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
   "r2_buckets": [
     {
       "binding": "CERTS",
-      "bucket_name": "certworker-artifacts"
+      "bucket_name": "certworker-artifacts-staging"
     }
   ],
   "workflows": [
     {
-      "name": "certificate-issuance",
+      "name": "certificate-issuance-staging",
       "binding": "ISSUANCE",
       "class_name": "CertificateWorkflow"
     }
@@ -69,7 +69,7 @@
       "name": "certworker",
       // The two environments share the hostname; moving it is a cutover (the
       // previous Worker must release the route first).
-      "routes": [{ "pattern": "certworker.example.com", "custom_domain": true }],
+      "routes": [{ "pattern": "certworker.example.org", "custom_domain": true }],
       "vars": {
         "ACCESS_TEAM_DOMAIN": "https://<team>.cloudflareaccess.com",
         "ACCESS_AUD": "<aud>",
@@ -79,19 +79,19 @@
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "certworker-prod",
+          "database_name": "certworker",
           "database_id": "00000000-0000-0000-0000-000000000000"
         }
       ],
       "r2_buckets": [
         {
           "binding": "CERTS",
-          "bucket_name": "certworker-artifacts-prod"
+          "bucket_name": "certworker-artifacts"
         }
       ],
       "workflows": [
         {
-          "name": "certificate-issuance-production",
+          "name": "certificate-issuance",
           "binding": "ISSUANCE",
           "class_name": "CertificateWorkflow"
         }

@@ -6,5 +6,5 @@ After=network-online.target
 [Service]
 Type=oneshot
 # Edit for this node: the Worker base URL and the domain rows to pull.
-Environment=CERTWORKER_API=https://ssl.example.com/v1
+Environment=CERTWORKER_API=https://certworker.example.org/v1
 ExecStart=/usr/local/bin/certworker-pull example.com
