@@ -249,7 +249,8 @@ ever emitted. List endpoints accept `?limit=` (1–200, default 50) and
 | `GET /api/certificates/:id/download?file=cert\|chain\|fullchain\|key\|bundle` | bootstrap download (`bundle` = fullchain + key) |
 | `POST /api/certificates/:id/revoke` | ACME revoke + purge artifacts (idempotent) |
 | `GET /api/runs` · `GET /api/runs/:id` | issuance runs: status, phase, timings, Let's Encrypt error detail |
-| `GET /api/keys` · `POST /api/keys` | list / create node API keys (plaintext shown **once**) |
+| `GET /api/keys` · `POST /api/keys` | list / create node API keys (plaintext shown **once**; optional `allowed_domains` scope) |
+| `PATCH /api/keys/:id` | replace a key's domain scope (`allowed_domains`; `null` = all domains) |
 | `POST /api/keys/:id/revoke` | immediate revocation |
 | `POST /api/keys/:id/rotate` | replacement key (same label) + revoke the old one |
 | `GET /api/pulls` | pull log (key, domain, status, IP) |
@@ -314,10 +315,14 @@ generated per certificate; the account key is long-lived.
 **API key (one key = one node).** Token format `cw_<id>.<secret>`; only
 SHA-256 of the secret is stored, the plaintext is shown once. Lookup by embedded
 id with constant-time hash comparison; revocation takes effect immediately.
-Optional per-key domain scoping exists in the schema (`allowed_domains_json`,
-NULL = all domains). A leaked key exposes exactly its scoped domains' material —
-inherent to identical distribution — so scope narrowly, rotate per node, and
-watch `last_used_at` / the pull log.
+Each key carries a domain scope (`allowed_domains`): `null` (the default) lets
+it pull every registered domain, while an explicit list restricts it to those
+exact domain row names (`example.com` and `*.example.com` are separate entries;
+only registered, non-deleted rows are accepted). Set the scope at creation or
+via `PATCH /api/keys/:id`; rotating a key carries its scope over. A leaked key
+exposes exactly its scoped domains' material — inherent to identical
+distribution — so scope narrowly, rotate per node, and watch `last_used_at` /
+the pull log.
 
 **Pull model.** Nodes poll; the server never notifies. The ETag changes exactly
 when the certificate changes (serial + fingerprint), so a poll that returns

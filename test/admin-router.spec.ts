@@ -131,6 +131,21 @@ describe("admin router", () => {
     expect(await response.json()).toMatchObject({ error: "not_found" });
   });
 
+  it("dispatches PATCH /api/keys/:id to the update handler", async () => {
+    const { access, token, options } = await authenticatedAccess();
+    const response = await handleAdminApi(
+      accessRequest(`/api/keys/${crypto.randomUUID()}`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ allowed_domains: null }),
+      }),
+      env,
+      options,
+    );
+    // The handler ran and answered 404 for the unknown key id.
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "not_found" });
+  });
+
   it("allows non-browser clients without Origin/Sec-Fetch-Site", async () => {
     const { access, token, options } = await authenticatedAccess();
     const response = await handleAdminApi(

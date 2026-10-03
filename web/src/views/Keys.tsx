@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { apiFetch, asApiError, type ApiError } from "../api/client";
-import type { ApiKey, CreatedApiKey } from "../api/types";
+import type { ApiKey, CreatedApiKey, Domain } from "../api/types";
 import { EmptyRow, ErrorBanner, Modal, Page, Pager, StatusBadge } from "../components";
 import { formatDateTime, truncate } from "../format";
-import { usePaged } from "../hooks";
+import { useAsync, usePaged } from "../hooks";
 
 export function KeysView() {
   const list = usePaged<ApiKey>((offset, limit) => `/api/keys?offset=${offset}&limit=${limit}`, []);
+  // Picker source for scope editing; the admin install scale makes one page enough.
+  const domains = useAsync<Domain[]>((signal) => apiFetch("/api/domains?limit=200", { signal }), []);
   // The plaintext token exists only in this state while the modal is open.
   const [revealed, setRevealed] = useState<CreatedApiKey | null>(null);
+  const [scoping, setScoping] = useState<ApiKey | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
 
   async function revoke(key: ApiKey) {
@@ -33,10 +36,16 @@ export function KeysView() {
     }
   }
 
+  function scopeText(key: ApiKey): string {
+    if (key.allowed_domains === null) return "All domains";
+    return key.allowed_domains.length === 0 ? "None" : key.allowed_domains.join(", ");
+  }
+
   return (
     <Page title="API keys">
-      <ErrorBanner error={actionError ?? list.error} />
+      <ErrorBanner error={actionError ?? list.error ?? domains.error} />
       <CreateKeyForm
+        domains={domains.data ?? []}
         onCreated={(created) => {
           setRevealed(created);
           list.reload();
@@ -48,6 +57,7 @@ export function KeysView() {
         <thead>
           <tr>
             <th>Label</th>
+            <th>Scope</th>
             <th>Hint</th>
             <th>Status</th>
             <th>Created</th>
@@ -60,6 +70,7 @@ export function KeysView() {
           {list.rows.map((key) => (
             <tr key={key.id}>
               <td>{key.label}</td>
+              <td title={scopeText(key)}>{truncate(scopeText(key), 40)}</td>
               <td>
                 <code>{key.key_hint}</code>
               </td>
@@ -71,6 +82,9 @@ export function KeysView() {
               <td>{formatDateTime(key.revoked_at)}</td>
               <td className="actions">
                 <div className="row-actions">
+                  <button type="button" className="secondary" onClick={() => setScoping(key)} disabled={key.status === "revoked"}>
+                    Edit scope
+                  </button>
                   <button type="button" className="secondary" onClick={() => rotate(key)}>
                     Rotate
                   </button>
@@ -81,32 +95,108 @@ export function KeysView() {
               </td>
             </tr>
           ))}
-          {list.rows.length === 0 && !list.loading ? <EmptyRow colSpan={7}>No API keys yet.</EmptyRow> : null}
+          {list.rows.length === 0 && !list.loading ? <EmptyRow colSpan={8}>No API keys yet.</EmptyRow> : null}
         </tbody>
       </table>
       <Pager hasMore={list.hasMore} loading={list.loading} onLoadMore={list.loadMore} />
 
       {revealed ? <TokenDialog created={revealed} onClose={() => setRevealed(null)} /> : null}
+      {scoping ? (
+        <EditScopeDialog
+          apiKey={scoping}
+          domains={domains.data ?? []}
+          onClose={() => setScoping(null)}
+          onSaved={() => {
+            setScoping(null);
+            list.reload();
+          }}
+          onError={setActionError}
+        />
+      ) : null}
     </Page>
   );
 }
 
+/**
+ * Shared scope picker: "All domains" (`null` on the API) or an explicit
+ * allowlist of registered domain row names. Exact names only — `example.com`
+ * and `*.example.com` are separate rows.
+ */
+function ScopeEditor({
+  domains,
+  allDomains,
+  selected,
+  onAllDomains,
+  onToggle,
+  idPrefix,
+}: {
+  domains: Domain[];
+  allDomains: boolean;
+  selected: string[];
+  onAllDomains: (all: boolean) => void;
+  onToggle: (name: string, checked: boolean) => void;
+  idPrefix: string;
+}) {
+  return (
+    <>
+      <div className="field inline">
+        <input
+          id={`${idPrefix}-all-domains`}
+          type="checkbox"
+          checked={allDomains}
+          onChange={(event) => onAllDomains(event.target.checked)}
+        />
+        <label htmlFor={`${idPrefix}-all-domains`}>All domains</label>
+      </div>
+      <fieldset disabled={allDomains}>
+        <legend>Allowed domains</legend>
+        {domains.length === 0 ? <p className="muted">No domains registered yet.</p> : null}
+        {domains.map((domain) => (
+          <div key={domain.id} className="field inline">
+            <input
+              id={`${idPrefix}-domain-${domain.id}`}
+              type="checkbox"
+              checked={selected.includes(domain.name)}
+              onChange={(event) => onToggle(domain.name, event.target.checked)}
+            />
+            <label htmlFor={`${idPrefix}-domain-${domain.id}`}>{domain.name}</label>
+          </div>
+        ))}
+      </fieldset>
+    </>
+  );
+}
+
 function CreateKeyForm({
+  domains,
   onCreated,
   onError,
 }: {
+  domains: Domain[];
   onCreated: (created: CreatedApiKey) => void;
   onError: (error: ApiError) => void;
 }) {
   const [label, setLabel] = useState("");
+  const [allDomains, setAllDomains] = useState(true);
+  const [selected, setSelected] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  function toggle(name: string, checked: boolean) {
+    setSelected((previous) => (checked ? [...previous, name] : previous.filter((item) => item !== name)));
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
     try {
-      onCreated(await apiFetch<CreatedApiKey>("/api/keys", { method: "POST", body: { label: label.trim() } }));
+      const created = await apiFetch<CreatedApiKey>("/api/keys", {
+        method: "POST",
+        body: { label: label.trim(), allowed_domains: allDomains ? null : selected },
+      });
+      onCreated(created);
       setLabel("");
+      setAllDomains(true);
+      setSelected([]);
     } catch (cause) {
       onError(asApiError(cause));
     } finally {
@@ -132,13 +222,82 @@ function CreateKeyForm({
             />
           </div>
           <div className="field inline">
-            <button type="submit" disabled={submitting || label.trim().length === 0}>
+            <button type="submit" disabled={submitting || label.trim().length === 0 || (!allDomains && selected.length === 0)}>
               {submitting ? "Creating…" : "Create key"}
             </button>
           </div>
         </div>
+        <ScopeEditor
+          idPrefix="key"
+          domains={domains}
+          allDomains={allDomains}
+          selected={selected}
+          onAllDomains={setAllDomains}
+          onToggle={toggle}
+        />
       </fieldset>
     </form>
+  );
+}
+
+function EditScopeDialog({
+  apiKey,
+  domains,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  apiKey: ApiKey;
+  domains: Domain[];
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (error: ApiError) => void;
+}) {
+  const [allDomains, setAllDomains] = useState(apiKey.allowed_domains === null);
+  const [selected, setSelected] = useState<string[]>(apiKey.allowed_domains ?? []);
+  const [submitting, setSubmitting] = useState(false);
+
+  function toggle(name: string, checked: boolean) {
+    setSelected((previous) => (checked ? [...previous, name] : previous.filter((item) => item !== name)));
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      await apiFetch(`/api/keys/${apiKey.id}`, {
+        method: "PATCH",
+        body: { allowed_domains: allDomains ? null : selected },
+      });
+      onSaved();
+    } catch (cause) {
+      onError(asApiError(cause));
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal title={`Scope for ${apiKey.label}`} onClose={onClose}>
+      <form onSubmit={submit}>
+        <ScopeEditor
+          idPrefix="edit-key"
+          domains={domains}
+          allDomains={allDomains}
+          selected={selected}
+          onAllDomains={setAllDomains}
+          onToggle={toggle}
+        />
+        <p className="muted">A node can pull certificates only for the listed names; everything else answers 403.</p>
+        <div className="row-actions">
+          <button type="submit" disabled={submitting || (!allDomains && selected.length === 0)}>
+            {submitting ? "Saving…" : "Save"}
+          </button>
+          <button type="button" className="secondary" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

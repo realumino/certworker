@@ -5,7 +5,7 @@ import { downloadCertificateHandler, getCertificateHandler, listCertificatesHand
 import { createAdminDependencies, type AdminHandler, type AdminOptions } from "./deps";
 import { checkMutationGuard, errorResponse, matchRoute } from "./http";
 import { getOverviewHandler } from "./overview";
-import { createKeyHandler, listKeysHandler, revokeKeyHandler, rotateKeyHandler } from "./keys";
+import { createKeyHandler, listKeysHandler, revokeKeyHandler, rotateKeyHandler, updateKeyHandler } from "./keys";
 import { listPullsHandler } from "./pulls";
 import { getRunHandler, listRunsHandler } from "./runs";
 
@@ -32,6 +32,7 @@ const ROUTES: Route[] = [
   { method: "GET", pattern: "/api/runs/:id", handler: getRunHandler },
   { method: "GET", pattern: "/api/keys", handler: listKeysHandler },
   { method: "POST", pattern: "/api/keys", handler: createKeyHandler },
+  { method: "PATCH", pattern: "/api/keys/:id", handler: updateKeyHandler },
   { method: "POST", pattern: "/api/keys/:id/revoke", handler: revokeKeyHandler },
   { method: "POST", pattern: "/api/keys/:id/rotate", handler: rotateKeyHandler },
   { method: "GET", pattern: "/api/pulls", handler: listPullsHandler },

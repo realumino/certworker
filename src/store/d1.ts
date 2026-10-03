@@ -577,6 +577,17 @@ export async function createApiKey(
   ).run();
 }
 
+export async function updateApiKeyAllowedDomains(
+  db: D1Database,
+  id: string,
+  allowedDomainsJson: string | null,
+): Promise<boolean> {
+  const result = await db.prepare(
+    "UPDATE api_keys SET allowed_domains_json = ? WHERE id = ?",
+  ).bind(allowedDomainsJson, id).run();
+  return result.meta.changes === 1;
+}
+
 export async function revokeApiKey(db: D1Database, id: string): Promise<boolean> {
   const result = await db.prepare(
     `UPDATE api_keys

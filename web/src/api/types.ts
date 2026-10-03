@@ -73,6 +73,8 @@ export interface ApiKey {
   id: string;
   label: string;
   key_hint: string;
+  /** `null` = all domains; otherwise the exact domain row names this key may pull. */
+  allowed_domains: string[] | null;
   status: ApiKeyStatus;
   created_at: string;
   last_used_at: string | null;
