@@ -7,4 +7,6 @@ After=network-online.target
 Type=oneshot
 # Edit for this node: the Worker base URL and the domain rows to pull.
 Environment=CERTWORKER_API=https://certworker.example.org/v1
+# Optional: run after a certificate changes (omit to install files only).
+# Environment=CERTWORKER_RELOAD_CMD=nginx -t && nginx -s reload
 ExecStart=/usr/local/bin/certworker-pull example.com

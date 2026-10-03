@@ -42,9 +42,10 @@ onboarding runbook live in [agent/](./agent/README.md).
    TXT records created through the Cloudflare DNS API, then stores the PEMs in R2 and
    metadata in D1. The previous certificate is purged.
 3. You create an API key per node (shown once) and install the reference agent.
-4. The agent polls `GET /v1/domains/<name>/cert` on a systemd timer, skips unchanged
-   certificates with `If-None-Match`/`304`, validates with `openssl`, installs the
-   files, and reloads nginx only when the pair changed.
+4. The agent polls `GET /v1/domains/<name>/files/fullchain` on a systemd timer, skips
+   unchanged certificates with `If-None-Match`/`304`, validates with `openssl`,
+   installs the pair under `/etc/certworker/`, and runs an optional reload command
+   only when the pair changed.
 5. The daily cron (`17 3 * * *`, UTC) reissues certificates whose `not_after` falls
    within their `renew_before_days` window (default 30). Nodes pick the new pair up on
    their next poll.
@@ -422,8 +423,9 @@ then create an API key and onboard the node with [agent/README.md](./agent/READM
 
 See [agent/README.md](./agent/README.md) for the full runbook. Short version: install
 `agent/certworker-pull` and the systemd units, put the `cw_<id>.<secret>` token in
-`/etc/certworker/token` (mode `600`), set `CERTWORKER_API`/`ExecStart` in the service
-unit, run the service once to install the PEMs under `/etc/nginx/ssl`, then
+`/etc/certworker/token` (mode `600`), set `CERTWORKER_API`/`ExecStart` (and
+`CERTWORKER_RELOAD_CMD` if something must reload) in the service unit, run the
+service once to install the PEMs under `/etc/certworker/`, then
 `systemctl enable --now certworker-pull.timer` (polls every 15 min ±5 min).
 
 ---

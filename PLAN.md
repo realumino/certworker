@@ -399,13 +399,16 @@ Rate limiting binding per key; `allowed_domains_json = NULL` means all domains
 ## 11. Node agent (reference, shell)
 
 `agent/` ships the reference implementation: `certworker-pull` (pull, validate,
-install, reload), `certworker-pull.service`, `certworker-pull.timer`, and the onboarding
-runbook in `agent/README.md`. Contract: `304` = skip; never reload on a `304`; stage
-into `.new` files, validate them with `openssl` (parses, and the key matches the
-certificate) and only then move both into place; test and reload nginx once per run;
-fail loudly (non-zero) on any error; treat an HTML `Content-Type` on a non-200 as
-"Access is in the way" in the log line. Domains are `ExecStart` arguments; the API
-key lives at `/etc/certworker/token` (0600).
+install, optional reload), `certworker-pull.service`, `certworker-pull.timer`, and the
+onboarding runbook in `agent/README.md`. The agent has no web-server coupling: it
+fetches the raw `fullchain` (and `key`) from `/v1/domains/<name>/files/...` — no JSON,
+so `jq` is not needed — installs into app-owned `/etc/certworker/{certs,private}`
+(overridable), and runs `CERTWORKER_RELOAD_CMD` once after a change (unset by
+default). Contract: `304` = skip; never reload on a `304`; stage into `.new` files,
+validate them with `openssl` (parses, and the key matches the certificate) and only
+then move both into place; fail loudly (non-zero) on any error; treat an HTML
+`Content-Type` on a non-200 as "Access is in the way" in the log line. Domains are
+`ExecStart` arguments; the API key lives at `/etc/certworker/token` (0600).
 
 ---
 
