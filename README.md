@@ -92,6 +92,166 @@ Keys are rate limited to 60 requests / 60 s and stop working immediately on revo
 
 ---
 
+## Credentials and API tokens
+
+Create these before deploying. Only the first is needed to run `wrangler`; the rest are
+what the running Worker uses. The examples below need `curl` and `jq`.
+
+| Credential | Created with | Used by | Stored as |
+|---|---|---|---|
+| Bootstrap API token (or `wrangler login`) | Cloudflare dashboard | Wrangler: D1, R2, deploy, secrets, routes, Access apps | shell env vars |
+| `CF_DNS_API_TOKEN` | Cloudflare dashboard | Worker + `npm run issue`: `_acme-challenge` TXT records | Worker secret |
+| `ENVELOPE_KEY` | `openssl rand` | Worker: AES-256-GCM for keys at rest | Worker secret |
+| Access apps A + B | Cloudflare Access API or dashboard | edge auth for the SPA and `/api` / `/v1` | nothing in the Worker |
+| Node API keys `cw_<id>.<secret>` | Admin panel or `POST /api/keys` | node agents | SHA-256 hash in D1 |
+
+Prerequisites you will need while creating the tokens: your **account ID**
+(`npx wrangler whoami` once authenticated, or the dashboard URL), the **zone ID** of the
+zone that holds your hostname, and (for app A) a configured **identity provider** in
+Zero Trust (the built-in One-time PIN works without extra setup).
+
+### 1. Bootstrap token for Wrangler
+
+`wrangler login` works, but its OAuth flow has no granular scopes. For least privilege
+use an **account-owned API token** and export it instead:
+
+```sh
+export CLOUDFLARE_API_TOKEN="<token>"
+export CLOUDFLARE_ACCOUNT_ID="<account id>"
+npx wrangler whoami
+```
+
+Create it at **Manage Account → API Tokens → Create Token → Custom token** (or **My
+Profile → API Tokens** for a user token). User tokens label permissions `Edit`;
+account-owned tokens label the same permissions `Write`.
+
+| Scope | Permission | Needed for |
+|---|---|---|
+| Account | Workers Scripts → Edit | deploy the Worker, set secrets |
+| Account | D1 → Edit | `wrangler d1 create`, `migrations apply` |
+| Account | Workers R2 Storage → Edit | `wrangler r2 bucket create` |
+| Zone (hostname's zone) | Workers Routes → Edit | attach the production custom domain |
+| Account | Access: Apps and Policies → Edit | create apps A/B from the terminal (skip if using the dashboard) |
+| Account | Account Settings → Read | optional; only needed if `CLOUDFLARE_ACCOUNT_ID` is unset |
+
+Notes:
+
+- The built-in **Edit Cloudflare Workers** template covers the first four; add Access
+  separately if you provision Access from the CLI.
+- The first `wrangler deploy` creates the two Workers. If your token is restricted to
+  existing Workers, create them once with a token that can create Workers (product-level
+  Workers Admin), then redeploy with the narrower token.
+- Binding a Worker to D1/R2 does not require permissions on those resources, but
+  *creating* the databases/buckets and applying migrations from the CLI does.
+- Only the production deploy touches routes; the staging Worker has no custom domain.
+- Scope the token to one account, and the routes permission to the hostname's zone.
+
+### 2. `CF_DNS_API_TOKEN` — the Worker's DNS token
+
+This is the token the Worker itself uses to resolve a domain's zone and to publish and
+remove `_acme-challenge` TXT records. Keep it separate from the bootstrap token: it
+lives inside the Worker and is the one credential that could leak from there.
+
+- **Type:** Zone-scoped token.
+- **Permissions:** `Zone → Zone → Read` and `Zone → DNS → Edit`.
+- **Zone resources:** only the zones you issue for. A token scoped to `example.com`
+  cannot issue for `other.com`; adding a domain outside the scope fails with
+  `No Cloudflare zone found for …; check Zone:Zone:Read access and the token's zone scope`.
+
+Create at **My Profile → API Tokens → Create Token → Custom token**, add the two
+permissions, and select the zones under **Zone Resources**. The value is shown once.
+
+Verify it proves both permissions (paste at the prompt; do not pass it as an argument):
+
+```bash
+printf 'Paste CF_DNS_API_TOKEN: ' && read -rs CF_DNS_API_TOKEN && echo
+curl -sS -H "Authorization: Bearer $CF_DNS_API_TOKEN" \
+  'https://api.cloudflare.com/client/v4/zones?per_page=1' | jq '{success, errors}'
+```
+
+Set it per environment (see [Deploy to Cloudflare](#deploy-to-cloudflare)):
+
+```sh
+npx wrangler secret put CF_DNS_API_TOKEN
+npx wrangler secret put CF_DNS_API_TOKEN --env production
+```
+
+The DNS-01 records are created with `ttl=60` and deleted after validation; nothing else
+in the zone is touched.
+
+### 3. `ENVELOPE_KEY`
+
+Not a Cloudflare credential. It is the AES-256-GCM key that encrypts the ACME account
+key and every leaf private key before they are written to R2.
+
+```sh
+openssl rand -base64 32
+```
+
+Set it as a Worker secret per environment, use a different value for staging and
+production, and **back it up**: without it the stored private keys cannot be decrypted,
+and re-issuing every certificate is the only recovery.
+
+```sh
+npx wrangler secret put ENVELOPE_KEY
+npx wrangler secret put ENVELOPE_KEY --env production
+```
+
+Envelope-key rotation is not implemented; changing the value invalidates existing R2 key
+material.
+
+### 4. Cloudflare Access apps A and B
+
+Two apps on the same hostname must exist before the Worker is usable. The Worker does not
+need a token for Access (it verifies the injected JWT against the public JWKS), but
+creating the apps needs `Access: Apps and Policies → Edit` on the bootstrap token.
+
+- **App A** — `certworker.example.org` (whole host), policy **Allow** for your IdP/email.
+  Protects the SPA and `/api/*`.
+- **App B** — `certworker.example.org/v1`, policy **Bypass** (or Service Auth for extra
+  hardening). The Worker still requires the node API key.
+
+From the terminal (replace `HOST`; app A's response also yields the `ACCESS_AUD`):
+
+```sh
+ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID"
+HOST=certworker.example.org
+API="https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/access/apps"
+BEARER="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+JSON='Content-Type: application/json'
+
+# App A: admin (Allow)
+APP_A=$(curl -sS -X POST "$API" -H "$BEARER" -H "$JSON" \
+  --data "{\"name\":\"certworker admin\",\"domain\":\"$HOST\",\"type\":\"self_hosted\"}")
+APP_A_ID=$(jq -r '.result.id' <<<"$APP_A")
+AUD=$(jq -r '.result.aud' <<<"$APP_A")          # -> ACCESS_AUD
+
+curl -sS -X POST "$API/$APP_A_ID/policies" -H "$BEARER" -H "$JSON" \
+  --data '{"name":"allow","decision":"allow","include":[{"email":{"email":"you@example.com"}}]}'
+
+# App B: node pulls (Bypass)
+APP_B_ID=$(curl -sS -X POST "$API" -H "$BEARER" -H "$JSON" \
+  --data "{\"name\":\"certworker nodes\",\"domain\":\"$HOST/v1\",\"type\":\"self_hosted\"}" \
+  | jq -r '.result.id')
+
+curl -sS -X POST "$API/$APP_B_ID/policies" -H "$BEARER" -H "$JSON" \
+  --data '{"name":"bypass","decision":"bypass","include":[{"everyone":{}}]}'
+```
+
+`ACCESS_TEAM_DOMAIN` is your Zero Trust team domain (`https://<team>.cloudflareaccess.com`)
+and `ACCESS_AUD` is app A's `aud` above; put both in the `vars` block of `wrangler.jsonc`.
+Dashboard equivalent: **Zero Trust → Access → Applications → Add an application →
+Self-hosted** with the same domains and policies.
+
+### 5. Node API keys
+
+Not created in advance. Create one per node in the admin panel **API Keys → Create**, or
+`POST /api/keys` once the Worker is live. The `cw_<id>.<secret>` value is shown once;
+only SHA-256(secret) is stored. Revoke or rotate at any time — the change takes effect on
+the node's next pull.
+
+---
+
 ## Configuration
 
 The Worker binding/variable contract is defined in `wrangler.example.jsonc` (tracked
@@ -120,20 +280,19 @@ Cron trigger: `17 3 * * *` (daily renewal + sweeper).
 
 ### Secrets
 
-| Secret | Meaning |
-|---|---|
-| `CF_DNS_API_TOKEN` | Cloudflare API token with `Zone:Zone:Read` + `Zone:DNS:Edit` on the zones you issue for |
-| `ENVELOPE_KEY` | base64 of 32 random bytes, `openssl rand -base64 32`; AES-256-GCM key that encrypts private keys at rest. **Use a distinct value per environment and keep it** |
+Both secrets (`CF_DNS_API_TOKEN`, `ENVELOPE_KEY`) are Worker secrets and must be set per
+environment. [Credentials and API tokens](#credentials-and-api-tokens) covers how to
+create each, its permission boundaries, and the `wrangler secret put` commands.
 
 Copy `.dev.vars.example` to `.dev.vars` for local runs. `.dev.vars` and `wrangler.jsonc`
 are gitignored.
 
 ### Cloudflare Access
 
-Two Access applications on the same hostname:
-
-- **App A** — pattern `certworker.example.org`, policy Allow (IdP/email). Protects the SPA and `/api/*`.
-- **App B** — pattern `certworker.example.org/v1`, policy **Bypass** (or Service Auth for extra hardening). The Worker enforces the API key either way.
+App A (`certworker.example.org`, policy Allow) protects the SPA and `/api/*`; app B
+(`certworker.example.org/v1`, policy Bypass) covers node pulls and leaves the API key as
+the Worker-side check. Create them with the API or dashboard commands in
+[Credentials and API tokens](#credentials-and-api-tokens).
 
 Set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` from app A. The Worker verifies the injected
 `Cf-Access-Jwt-Assertion` (RS256, `iss`, `aud`) on every admin request, so `/api/*` is
@@ -229,10 +388,13 @@ production `routes` pattern. Then `npm run types`.
 
 ### 2. Apply migrations and set secrets
 
+Create `CF_DNS_API_TOKEN` and `ENVELOPE_KEY` first, then apply them per environment (see
+[Credentials and API tokens](#credentials-and-api-tokens)):
+
 ```sh
 npx wrangler d1 migrations apply DB --remote
 npx wrangler secret put CF_DNS_API_TOKEN
-npx wrangler secret put ENVELOPE_KEY          # openssl rand -base64 32
+npx wrangler secret put ENVELOPE_KEY
 
 # production:
 npx wrangler d1 migrations apply DB --env production --remote
@@ -242,8 +404,9 @@ npx wrangler secret put ENVELOPE_KEY --env production   # distinct from staging
 
 ### 3. Create Access applications
 
-Create app A on your host (Allow policy) and app B on `/<your host>/v1` (Bypass).
-Put app A's team domain and AUD in the `vars` block, then redeploy if you changed them.
+Create app A (Allow) and app B (Bypass), then put app A's `ACCESS_TEAM_DOMAIN` and
+`ACCESS_AUD` in the `vars` block. API and dashboard instructions are in
+[Credentials and API tokens](#credentials-and-api-tokens).
 
 ### 4. Deploy
 
