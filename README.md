@@ -174,7 +174,9 @@ Setup:
 1. Create app A on your hostname with an Allow policy for your team/IdP (or
    individual emails). Copy its **AUD tag**.
 2. Create app B with the path `certworker.example.org/v1` and a **Bypass**
-   policy. (Do not reuse app A's allow policy here; nodes have no browser.)
+   policy (or a **Service Auth** policy if you install a service token on each
+   node — see below). (Do not reuse app A's allow policy here; nodes have no
+   browser.)
 3. Put the team domain and app A's AUD tag into the `vars` of **both**
    environments: `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`, then redeploy.
 
@@ -186,9 +188,13 @@ pulls fail loudly (an HTML login page or 403 — see the troubleshooting table i
 [`agent/README.md`](agent/README.md)) while the admin surface keeps working.
 Access does not log bypassed traffic; the `pull_events` table is the pull log.
 
-Optional hardening (no code change): give app B a **Service Auth** policy
-instead of Bypass, so nodes additionally send `CF-Access-Client-Id` /
-`CF-Access-Client-Secret` headers.
+Optional hardening: give app B a **Service Auth** policy instead of Bypass and
+install a service token on each node — the agent sends `CF-Access-Client-Id` /
+`CF-Access-Client-Secret` when `access-client-id` and `access-client-secret`
+exist in `/etc/certworker` (see [`agent/README.md`](agent/README.md)). Enabling
+strict service token authentication makes Access answer missing or invalid
+tokens with `401`/`403` instead of a login redirect. The Worker code is
+unchanged either way; the API key remains the per-node credential.
 
 ### Run on local wrangler
 
@@ -274,7 +280,10 @@ touching R2 or decrypting anything. Successful pulls are recorded in
 `:name` is the exact domain row name (`example.com`, or `*.example.com` for a
 wildcard-only row). Common errors: `401` bad/revoked key, `403 forbidden_domain`
 (key not scoped to that name), `404 not_found` (unknown domain) or
-`404 certificate_missing` (nothing issued yet), `429 rate_limited`.
+`404 certificate_missing` (nothing issued yet), `429 rate_limited`. With a
+Service Auth app B, Access can also reject a pull before it reaches the Worker
+(`401`/`403`, or a `302` login redirect when strict service token authentication
+is off); such requests never appear in `pull_events`.
 
 ## Concepts
 

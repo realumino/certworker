@@ -26,11 +26,17 @@
 #   CERTWORKER_CERT_DIR    destination for fullchain .pem (/etc/certworker/certs)
 #   CERTWORKER_KEY_DIR     destination for private .key   (/etc/certworker/private)
 #   CERTWORKER_RELOAD_CMD  optional command run after a change (unset)
+#
+# If `access-client-id` and `access-client-secret` exist in CERTWORKER_CONF_DIR,
+# every request additionally carries the CF-Access-Client-Id / -Secret headers
+# for a Cloudflare Access Service Auth policy.
 set -euo pipefail
 
 API_BASE="${CERTWORKER_API:-https://certworker.example.org/v1}"
 CONF_DIR="${CERTWORKER_CONF_DIR:-/etc/certworker}"
 TOKEN_FILE="$CONF_DIR/token"
+ACCESS_ID_FILE="$CONF_DIR/access-client-id"
+ACCESS_SECRET_FILE="$CONF_DIR/access-client-secret"
 STATE_DIR="${CERTWORKER_STATE_DIR:-/var/lib/certworker}"
 CERT_DIR="${CERTWORKER_CERT_DIR:-/etc/certworker/certs}"
 KEY_DIR="${CERTWORKER_KEY_DIR:-/etc/certworker/private}"
@@ -46,7 +52,9 @@ report_http_error() {
   content_type="$(awk 'tolower($1) == "content-type:" { sub(/\r$/, "", $2); ct = $2 } END { print ct }' "$headers" 2>/dev/null || true)"
   err "$domain pull failed: HTTP ${code:-???}${content_type:+ (content-type: $content_type)}"
   if [[ "$content_type" == text/html* ]]; then
-    err "$domain returned HTML; Cloudflare Access is probably blocking /v1 (app B must be Bypass, not Allow)"
+    err "$domain returned HTML; Cloudflare Access is blocking /v1 (app B must be Bypass or Service Auth, not Allow)"
+  elif [[ "$code" == "401" || "$code" == "403" ]]; then
+    err "$domain was rejected; check the API key in $TOKEN_FILE and, with Access Service Auth, $ACCESS_ID_FILE / $ACCESS_SECRET_FILE"
   elif [[ "$code" == "429" ]]; then
     err "$domain is rate limited; the next timer run will retry"
   fi
@@ -65,6 +73,17 @@ done
 [[ -r "$TOKEN_FILE" ]] || { err "missing or unreadable token file: $TOKEN_FILE"; exit 1; }
 TOKEN="$(cat "$TOKEN_FILE")"
 [[ -n "$TOKEN" ]] || { err "token file is empty: $TOKEN_FILE"; exit 1; }
+
+auth_args=(-H "Authorization: Bearer $TOKEN")
+if [[ -e "$ACCESS_ID_FILE" || -e "$ACCESS_SECRET_FILE" ]]; then
+  [[ -r "$ACCESS_ID_FILE" && -r "$ACCESS_SECRET_FILE" ]] \
+    || { err "Access service token needs both $ACCESS_ID_FILE and $ACCESS_SECRET_FILE"; exit 1; }
+  access_id="$(cat "$ACCESS_ID_FILE")"
+  access_secret="$(cat "$ACCESS_SECRET_FILE")"
+  [[ -n "$access_id" && -n "$access_secret" ]] \
+    || { err "Access service token files must not be empty: $ACCESS_ID_FILE / $ACCESS_SECRET_FILE"; exit 1; }
+  auth_args+=(-H "CF-Access-Client-Id: $access_id" -H "CF-Access-Client-Secret: $access_secret")
+fi
 
 umask 077
 mkdir -p "$STATE_DIR" "$CERT_DIR" "$KEY_DIR"
@@ -85,7 +104,7 @@ for domain in "$@"; do
   # One conditional request per domain: 304 means nothing changed.
   cert_args=(-sS --proto '=https' --connect-timeout 10 --max-time 120
              -D "$tmp_cert_headers" -o "$tmp_cert" -w '%{http_code}'
-             -H "Authorization: Bearer $TOKEN")
+             "${auth_args[@]}")
   if [[ -f "$etag_file" ]]; then
     cert_args+=(-H "If-None-Match: $(cat "$etag_file")")
   fi
@@ -115,7 +134,7 @@ for domain in "$@"; do
 
   key_code="$(curl -sS --proto '=https' --connect-timeout 10 --max-time 120 \
     -D "$tmp_key_headers" -o "$tmp_key" -w '%{http_code}' \
-    -H "Authorization: Bearer $TOKEN" "$API_BASE/domains/$domain/files/key" || true)"
+    "${auth_args[@]}" "$API_BASE/domains/$domain/files/key" || true)"
   if [[ "$key_code" != "200" ]]; then
     report_http_error "$domain (key)" "$key_code" "$tmp_key_headers"
     rm -f "$tmp_cert" "$tmp_key" "$tmp_cert_headers" "$tmp_key_headers"

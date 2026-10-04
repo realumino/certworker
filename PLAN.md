@@ -77,8 +77,10 @@ redirects to login. The layering is deliberately asymmetric:
 - Access does not log bypassed traffic; `pull_events` in D1 is the pull log, and zone
   WAF/rate rules still apply to `/v1`.
 
-Optional hardening (off by default, no code change): give app B a **Service Auth**
-policy instead of Bypass, so nodes additionally present `CF-Access-Client-Id/Secret`.
+Optional hardening (off by default, Worker unchanged): give app B a **Service
+Auth** policy instead of Bypass, so nodes additionally present
+`CF-Access-Client-Id/Secret`; the agent sends them when `access-client-id` /
+`access-client-secret` exist in its conf dir.
 
 ---
 
@@ -409,6 +411,9 @@ validate them with `openssl` (parses, and the key matches the certificate) and o
 then move both into place; fail loudly (non-zero) on any error; treat an HTML
 `Content-Type` on a non-200 as "Access is in the way" in the log line. Domains are
 `ExecStart` arguments; the API key lives at `/etc/certworker/token` (0600).
+When Access Service Auth protects `/v1`, optional
+`/etc/certworker/access-client-id` and `access-client-secret` files (0600) make
+every request carry `CF-Access-Client-Id/Secret`.
 
 ---
 
@@ -528,7 +533,8 @@ Secrets (`wrangler secret put`): `CF_DNS_API_TOKEN`, `ENVELOPE_KEY`.
 ## 16. Open items
 
 1. **Failure alerting** — deferred (webhook/email later; nodes are never notified).
-2. **Access Service Auth for `/v1`** — optional hardening; default is Bypass.
+2. **Access Service Auth for `/v1`** — supported: optional hardening, default is
+   Bypass; the agent presents the service token when the credential files exist.
 3. **Envelope key rotation** — deferred; needs versioned keys + rewrap command.
 4. **Per-key domain scoping UI** — done: `POST /api/keys` takes `allowed_domains`
    (`null` = all domains, `[]` = no domains), `PATCH /api/keys/:id` replaces it,
